@@ -103,6 +103,22 @@ DEFAULTS = {
     ],
     # any other provider whose name contains one of these is treated as storage
     "storage_provider_hints": ["stornvme", "storahci", "storport", "nvme", "iastor", "disk"],
+    # providers that describe the platform (CPU / PCIe / memory) rather than the drive itself:
+    # on their own they can make "did the drive cause it?" a *possibly*, never a *likely*
+    "platform_provider_hints": ["whea"],
+    # crash (bugcheck) codes that point at storage: "strong" -> likely drive-related, "possible" -> possibly
+    "storage_bugchecks": {
+        "0x7A": ["KERNEL_DATA_INPAGE_ERROR", "strong"],
+        "0x77": ["KERNEL_STACK_INPAGE_ERROR", "strong"],
+        "0x7B": ["INACCESSIBLE_BOOT_DEVICE", "strong"],
+        "0xED": ["UNMOUNTABLE_BOOT_VOLUME", "strong"],
+        "0xF4": ["CRITICAL_OBJECT_TERMINATION", "strong"],
+        "0x24": ["NTFS_FILE_SYSTEM", "possible"],
+        "0x9F": ["DRIVER_POWER_STATE_FAILURE", "possible"],
+        "0xEF": ["CRITICAL_PROCESS_DIED", "possible"],
+        "0x133": ["DPC_WATCHDOG_VIOLATION", "possible"],
+        "0x154": ["UNEXPECTED_STORE_EXCEPTION", "possible"],
+    },
 
     # ---- timing / thresholds (seconds) ---------------------------------------
     "settings": {
@@ -111,7 +127,7 @@ DEFAULTS = {
         "tail_window_s": 1800,        # look for stop signals this long before last event
         "restart_gap_s": 300,         # stop -> boot gap below this = restart (when 1074 silent)
         "long_restart_gap_s": 1800,   # 1074 says restart but gap longer -> flag
-        "drive_window_s": 60,         # storage correlation window around transitions
+        "drive_window_s": 60,         # drive window before power-off / sleep and after boot / wake
         "pt1_merge_s": 300,           # Power-Troubleshooter 1 merges into a nearby resume
         "unexplained_gap_s": 7200,    # quiet gap inside a session worth flagging
         "time_change_flag_s": 300,    # clock jump bigger than this is flagged

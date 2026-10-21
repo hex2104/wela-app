@@ -31,6 +31,7 @@ def _tz_label(offset_min):
 def rows(result: dict, offset_min: int = 0):
     out = []
     for it in result["items"]:
+        drv = it.get("drive", {})
         out.append({
             "ID": it["id"],
             f"Time ({_tz_label(offset_min)})": _fmt(it.get("time"), offset_min),
@@ -38,9 +39,12 @@ def rows(result: dict, offset_min: int = 0):
             "Detail": it.get("subtype") or "",
             "Confidence": it["confidence"],
             "Needs review": "yes" if it.get("needs_review") else "",
-            "Drive state": it.get("drive", {}).get("state", ""),
-            "Storage events": "; ".join(f"{k} x{v}" for d in (it.get("drive", {}).get("before"), it.get("drive", {}).get("after"))
+            "Drive state": drv.get("state", ""),
+            "Drive caused it?": drv.get("cause_label", ""),
+            "Effect on drive": drv.get("effect_label", ""),
+            "Storage events": "; ".join(f"{k} x{v}" for d in (drv.get("before"), drv.get("after"))
                                         if d for k, v in d.get("counts", {}).items()),
+            "Drive reasons": "; ".join(drv.get("reasons", [])),
             "Off / gap": it.get("gap") or it.get("duration") or "",
             "Boot type": it.get("boot_type") or "",
             "Wake source": it.get("wake_source") or "",
@@ -48,6 +52,29 @@ def rows(result: dict, offset_min: int = 0):
             "Evidence missing": "; ".join(it.get("evidence_missing", [])),
             "Flags": "; ".join(f["text"] for f in it.get("flags", [])),
         })
+    return out
+
+
+def drive_rows(result: dict, offset_min: int = 0):
+    """One row per storage event in the before / after window of every power cycle and sleep."""
+    hdr = ["ID", "Type", "Detail", "Drive caused it?", "Window", "Offset (s)", f"Time ({_tz_label(offset_min)})",
+           "Provider", "Event ID", "Meaning", "State", "Log", "Fields"]
+    out = [hdr]
+    for it in result["items"]:
+        drv = it.get("drive", {})
+        sleep = it["type"] == "sleep"
+        for side, label in (("before", "before sleep" if sleep else "before power-off"),
+                            ("after", "after wake" if sleep else "after boot")):
+            w = drv.get(side)
+            if not w:
+                continue
+            head = [it["id"], TYPE_LABEL.get(it["type"], it["type"]), it.get("subtype") or "",
+                    drv.get("cause_label", ""), label]
+            if not w["events"]:
+                out.append(head + ["", "", "", "", "(no drive events in this window)", w["state"], "", ""])
+            for e in w["events"]:
+                out.append(head + [e.get("offset_s", ""), _fmt(e["time"], offset_min), e["provider"], e["eid"],
+                                   e["label"], e["state"], e.get("channel", ""), e.get("fields", "")])
     return out
 
 
@@ -105,7 +132,9 @@ def to_xlsx(result: dict, offset_min: int = 0) -> bytes:
     if data:
         hdr = list(data[0].keys())
         sheets.append(("Power cycles", [hdr] + [[r[h] for h in hdr] for r in data],
-                       [6, 20, 16, 34, 11, 12, 12, 34, 12, 26, 14, 60, 50, 60]))
+                       [6, 20, 16, 34, 11, 12, 12, 16, 22, 34, 70, 12, 26, 14, 60, 50, 60]))
+        sheets.append(("Drive windows", drive_rows(result, offset_min),
+                       [6, 16, 30, 14, 16, 10, 20, 28, 9, 26, 10, 36, 70]))
     c = result["counts"]
     summary = [["Metric", "Value"], ["Computer", result.get("computer", "")],
                ["Coverage start (UTC)", _fmt(result["coverage"]["start"])],
@@ -114,7 +143,12 @@ def to_xlsx(result: dict, offset_min: int = 0) -> bytes:
                ["Normal shutdowns", c["shutdown"]], ["Restarts", c["restart"]],
                ["Hard shutdowns", c["hard"]], ["Undetermined", c["unknown"]],
                ["Sleep (S3)", c["sleep"]], ["Hibernate", c["hibernate"]],
-               ["Modern Standby", c["modern_standby"]], ["Needs review", c["needs_review"]]]
+               ["Modern Standby", c["modern_standby"]], ["Needs review", c["needs_review"]],
+               ["Drive caused it - likely", c.get("drive_likely", "")],
+               ["Drive caused it - possibly", c.get("drive_possible", "")],
+               ["Drive caused it - no drive evidence", c.get("drive_no_evidence", "")],
+               ["Drive caused it - can't tell", c.get("drive_unknown", "")],
+               ["Drive errors right after boot / wake", c.get("drive_effect", "")]]
     for k, v in result.get("hard_breakdown", {}).items():
         summary.append([f"Hard shutdown - {k}", v])
     sheets.insert(0, ("Summary", summary, [34, 30]))
@@ -184,7 +218,7 @@ th{background:var(--navy);color:#fff;text-align:left;font-weight:600;font-size:1
 td{padding:7px 10px;border-top:1px solid var(--line);vertical-align:top;font-size:13px}tr:nth-child(even) td{background:#fafbfe}
 .chip{display:inline-block;padding:1px 8px;border-radius:999px;color:#fff;font-size:11.5px;font-weight:600;white-space:nowrap}
 .shutdown{background:var(--ok)}.restart{background:var(--navy)}.hard{background:var(--bad)}.unknown{background:var(--grey)}.sleep{background:var(--purple)}
-.healthy{background:var(--ok)}.slow,.warning{background:var(--warn)}.reset,.error,.missing{background:var(--bad)}.nodata{background:var(--grey)}
+.healthy{background:var(--ok)}.slow,.warning{background:var(--warn)}.reset,.error,.missing{background:var(--bad)}.nodata,.info{background:var(--grey)}
 .small{color:var(--muted);font-size:12px}.flag{color:var(--warn)}
 """
 
@@ -219,13 +253,30 @@ def to_html(result: dict, offset_min: int = 0) -> bytes:
         ev = "<br>".join(f"{x['eid']} {e(x['label'])}" for x in it["evidence_found"])
         miss = "<br>".join(f"missing: {e(x)}" for x in it["evidence_missing"])
         fl = "<br>".join(f"<span class='flag'>{e(f['text'])}</span>" for f in it["flags"])
+        cause = it["drive"].get("cause_label", "")
+        verdict = " &middot; ".join(x for x in [
+            f"caused it? <b>{e(cause)}</b>" if cause and it["type"] != "sleep" else "",
+            e(it["drive"].get("effect_label", ""))] if x)
         parts.append(f"<tr><td>{it['id']}</td><td>{_fmt(it.get('time'), offset_min)}</td>"
                      f"<td><span class='chip {it['type']}'>{TYPE_LABEL.get(it['type'], it['type'])}</span></td>"
                      f"<td>{e(it.get('subtype') or '')}<div class='small'>{e(it.get('gap') or it.get('duration') or '')}</div></td>"
                      f"<td>{int(it['confidence'] * 100)}%</td>"
-                     f"<td><span class='chip {ds.replace(' ', '')}'>{e(ds)}</span><div class='small'>{e(counts)}</div></td>"
+                     f"<td><span class='chip {ds.replace(' ', '')}'>{e(ds)}</span><div class='small'>{verdict}</div>"
+                     f"<div class='small'>{e(counts)}</div></td>"
                      f"<td class='small'>{ev}<br>{miss}</td><td class='small'>{fl}</td></tr>")
-    parts.append("</table><h2>Log coverage</h2><table><tr><th>Channel</th><th>Events</th><th>From</th><th>To</th></tr>")
+    parts.append("</table>")
+    win_rows = drive_rows(result, offset_min)[1:]
+    if win_rows:
+        parts.append(f"<h2>Drive around each power cycle</h2><table><tr><th>ID</th><th>Caused it?</th><th>Window</th>"
+                     f"<th>Offset</th><th>Time ({tz})</th><th>Event</th><th>State</th><th>Fields</th></tr>")
+        for idv, _, _, cause, window, off, t, prov, eid, label, state, _, fields in win_rows:
+            ev_txt = f"{eid} {e(label)} <span class='small'>&middot; {e(prov)}</span>" if eid != "" else e(label)
+            parts.append(f"<tr><td>{idv}</td><td>{e(cause)}</td><td>{e(window)}</td>"
+                         f"<td>{f'{off:+.0f} s' if isinstance(off, (int, float)) else ''}</td><td>{t}</td><td>{ev_txt}</td>"
+                         f"<td><span class='chip {state.replace(' ', '')}'>{e(state)}</span></td>"
+                         f"<td class='small'>{e(fields)}</td></tr>")
+        parts.append("</table>")
+    parts.append("<h2>Log coverage</h2><table><tr><th>Channel</th><th>Events</th><th>From</th><th>To</th></tr>")
     for ch in result["channels"]:
         parts.append(f"<tr><td>{e(ch['channel'])}</td><td>{ch['events']:,}</td><td>{_fmt(ch['start'], offset_min)}</td>"
                      f"<td>{_fmt(ch['end'], offset_min)}</td></tr>")

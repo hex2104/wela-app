@@ -55,11 +55,20 @@ wevtutil epl Microsoft-Windows-Partition/Diagnostic Partition.evtx   (optional: 
 
 4. **Sleep** inside a session: 42 → 107 → Power-Troubleshooter 1. Any one of them is enough to rebuild the episode,
    because PT‑1 carries both sleep and wake time. Modern Standby uses 506/507. Hibernate resume uses 27 BootType=2.
-5. **Drive correlation**: disk 7/11/51/153/157, stornvme/storahci 129, NTFS, volmgr, WHEA 17/18/19 and all
-   Storport events within ±60 s of every transition. The drive is labelled *healthy / slow / reset / error / missing*.
-6. **Confidence** is the sum of evidence weights, minus penalties for conflicts and log gaps.
+5. **Drive around every power cycle**: every storage event — all Storport events at every level, disk
+   7/11/51/153/157, stornvme/storahci 129, NTFS, volmgr and WHEA — in the 60 s before power-off (or sleep) and the
+   60 s after boot (or wake), each with its offset and key fields (SCSI opcodes decoded). The drive is labelled
+   *healthy / slow / reset / error / missing*; informational events are listed but don't change the label.
+6. **Did the drive cause it?** For hard shutdowns and undetermined power cycles: **Likely** (drive reset, error or
+   surprise removal before power-off, or a storage crash code such as 0x7A), **Possibly** (slow I/O or warnings,
+   WHEA-only errors, or a crash code such as 0x9F), **No drive evidence** (drive quiet before power-off) or
+   **Can't tell** (no log). **Effect on the drive** describes the minute after boot or wake. Each verdict lists its
+   reasons, and the Excel export has a *Drive windows* sheet with every event from both windows of every power cycle.
+   *No drive evidence* is not proof the drive is fine: Windows keeps its logs on the system drive, so a drive that
+   froze suddenly may never have saved its last events. Cross-check the drive's own SMART and error logs.
+7. **Confidence** is the sum of evidence weights, minus penalties for conflicts and log gaps.
    Anything below 0.6, or with a warning, is marked **Needs review**.
-7. **SMART check** tab: enter the drive's Power Cycles / Unsafe Shutdowns delta to cross-check the OS logs against the SSD.
+8. **SMART check** tab: enter the drive's Power Cycles / Unsafe Shutdowns delta to cross-check the OS logs against the SSD.
 
 All event IDs, weights and thresholds live in `wela/catalog.py`. Override any of them with `wela_config.json`
 next to `run_wela.py`, e.g.

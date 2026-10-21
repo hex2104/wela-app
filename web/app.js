@@ -79,6 +79,17 @@ function confBar(c) {
   return `<div class="conf"><div class="bar"><b style="width:${Math.round(c * 100)}%;background:${col}"></b></div><span>${Math.round(c * 100)}%</span></div>`;
 }
 const confColor = (c) => (c >= 0.8 ? "var(--ok)" : c >= 0.6 ? "var(--accent)" : c >= 0.35 ? "var(--warn)" : "var(--bad)");
+const CAUSE_CLS = { likely: "error", possible: "warning", no_evidence: "noevidence", unknown: "nodata", "n/a": "nodata" };
+const EFFECT_CLS = { missing: "error", errors: "error", warnings: "warning", none: "healthy", unknown: "nodata" };
+const causeChip = (d) => (d?.cause ? `<span class="chip ${CAUSE_CLS[d.cause]}">${esc(d.cause_label)}</span>` : "");
+const effectChip = (d) => (d?.effect ? `<span class="chip ${EFFECT_CLS[d.effect]}">${esc(d.effect_label)}</span>` : "");
+const isSuspect = (it) => ["likely", "possible"].includes(it.drive?.cause);
+const hitAfter = (it) => ["errors", "missing"].includes(it.drive?.effect);
+function fmtOff(s) {
+  if (s == null) return "";
+  const a = Math.abs(s);
+  return `${s < 0 ? "−" : "+"}${a < 10 && a % 1 ? a.toFixed(1) : Math.round(a)}s`;
+}
 
 /* ------------------------------------------------------------------ sidebar */
 async function loadCases() {
@@ -120,7 +131,7 @@ function renderHome() {
       <div class="err" id="err"></div>
       <details class="adv"><summary>Analysis settings</summary>
         <div class="settings">
-          <label>Drive correlation window (± seconds)<input type="number" id="s_drive" value="${st.drive_window_s ?? 60}" min="5"></label>
+          <label>Drive window before power-off &amp; after boot (seconds)<input type="number" id="s_drive" value="${st.drive_window_s ?? 60}" min="5"></label>
           <label>Restart if stop → boot gap below (seconds)<input type="number" id="s_restart" value="${st.restart_gap_s ?? 300}" min="10"></label>
           <label>Flag for review below confidence<input type="number" id="s_review" value="${st.review_threshold ?? 0.6}" step="0.05" min="0" max="1"></label>
           <label>Flag quiet gaps longer than (seconds)<input type="number" id="s_gap" value="${st.unexplained_gap_s ?? 7200}" min="600"></label>
@@ -131,7 +142,7 @@ function renderHome() {
     <div class="steps">
       ${[["Merge", "All logs become one timeline in UTC, with coverage and gap checks per log."],
          ["Classify", "Each boot closes a session: clean stop, hard shutdown or undetermined — from redundant evidence."],
-         ["Correlate", "Disk, NVMe, Storport and PCIe events in a window around every transition."],
+         ["Correlate", "Every Storport, disk, NVMe and PCIe event in the minute before power-off and after boot — did the drive cause it?"],
          ["Review", "Confidence per verdict, missing evidence listed, uncertain items flagged."]]
         .map(([b, s], i) => `<div class="card step"><div class="n">${i + 1}</div><b>${b}</b><span>${s}</span></div>`).join("")}
     </div>
@@ -238,11 +249,23 @@ function tabOverview() {
   const t0 = c.coverage.start_ts, t1 = c.coverage.end_ts, span = Math.max(1, t1 - t0);
   const st = Object.entries(c.storage_counts).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const maxSt = Math.max(1, ...st.map((x) => x[1]));
+  const suspects = c.items.filter(isSuspect).slice(0, 6);
+  const dstats = [["likely", "Likely", "drive"], ["possible", "Possibly", "drive"], ["no_evidence", "No drive evidence"], ["unknown", "Can't tell"]];
   $("#tabBody").innerHTML = `
     <div class="tiles">${tiles.map(([k, v, l, s]) => `
       <div class="card tile" data-f="${k}" style="--c:${colors[k] || TYPES[k].color}">
         <div class="v">${v}</div><div class="l">${l}</div><div class="s">${esc(s || "")}</div></div>`).join("")}</div>
     <div class="grid g2">
+      <div class="card span2"><div class="card-h"><h3>Did the drive cause it?</h3><span class="muted small">hard shutdowns &amp; undetermined · drive checked ${esc(c.settings.drive_window_s)}s before power-off and after boot</span></div>
+        <div class="card-b">${n.drive_likely === undefined ? '<div class="muted">Re-run the analysis to get the drive assessment for this case.</div>' : `
+          <div class="dstats">${dstats.map(([k, l, f]) => `<div class="dstat ${k}" ${f ? `data-f="${f}"` : ""}><b>${n["drive_" + k]}</b><span>${l}</span></div>`).join("")}
+            <div class="dstat effect" data-f="effect"><b>${n.drive_effect}</b><span>drive errors right after boot / wake</span></div></div>
+          <div class="muted small" style="margin:2px 0 6px">“No drive evidence” is not proof the drive is fine — a drive that froze suddenly may not have been able to save its last events. Cross-check its SMART and error logs.</div>
+          ${suspects.length ? suspects.map((it) => `
+            <div class="list-row" data-id="${it.id}">${chip(it.type)}<div style="flex:1;min-width:0"><div class="lt">${esc(it.id)} · ${esc(it.subtype)}</div>
+              <div class="muted small">${fmt(it.time)} · ${esc(it.drive.reasons[0] || "")}</div></div>${causeChip(it.drive)}</div>`).join("")
+            : '<div class="muted" style="padding-top:8px">No power cycle points at the drive.</div>'}`}
+        </div></div>
       <div class="card"><div class="card-h"><h3>Hard shutdown causes</h3><span class="muted small">${n.hard} total</span></div>
         <div class="card-b">${hb.length ? hb.map(([k, v]) => `<div class="hbar"><span>${esc(k)}</span><div class="track"><b style="width:${(v / maxHb) * 100}%;background:var(--bad)"></b></div><span class="n">${v}</span></div>`).join("")
           : '<div class="muted">No hard shutdowns found.</div>'}</div></div>
@@ -264,7 +287,7 @@ function tabOverview() {
           ${c.disks.length ? `<div class="muted small" style="margin-top:12px">Drive: <b style="color:var(--ink)">${esc(c.disks[0].Model || "")}</b> · FW ${esc(c.disks[0].Revision || c.disks[0].FirmwareRevision || "?")} · SN ${esc(c.disks[0].SerialNumber || "?")}</div>` : ""}
         </div></div>
     </div>`;
-  $$(".tile").forEach((t) => (t.onclick = () => { S.filter = t.dataset.f; S.tab = "cycles"; renderCase(); }));
+  $$(".tile, .dstat[data-f]").forEach((t) => (t.onclick = () => { S.filter = t.dataset.f; S.tab = "cycles"; renderCase(); }));
   $$(".list-row").forEach((r) => (r.onclick = () => openDetail(r.dataset.id)));
 }
 function subOf(type) {
@@ -281,16 +304,19 @@ function filtered() {
   const q = S.q.toLowerCase();
   return S.c.items.filter((it) => {
     if (S.filter === "review" && !it.needs_review) return false;
-    if (!["all", "review"].includes(S.filter) && it.type !== S.filter) return false;
+    if (S.filter === "drive" && !isSuspect(it)) return false;
+    if (S.filter === "effect" && !hitAfter(it)) return false;
+    if (!["all", "review", "drive", "effect"].includes(S.filter) && it.type !== S.filter) return false;
     if (!q) return true;
-    return `${it.id} ${it.type} ${it.subtype} ${it.drive?.state} ${it.flags.map((f) => f.text).join(" ")} ${it.evidence_found.map((e) => e.eid).join(" ")}`.toLowerCase().includes(q);
+    return `${it.id} ${it.type} ${it.subtype} ${it.drive?.state} ${it.drive?.cause_label ?? ""} ${it.drive?.effect_label ?? ""} ${it.flags.map((f) => f.text).join(" ")} ${it.evidence_found.map((e) => e.eid).join(" ")}`.toLowerCase().includes(q);
   });
 }
 function tabCycles() {
   const n = S.c.counts;
   const f = [["all", "All", S.c.items.length], ["shutdown", "Shutdown", n.shutdown], ["restart", "Restart", n.restart],
     ["hard", "Hard", n.hard], ["sleep", "Sleep", n.sleep + n.hibernate + n.modern_standby], ["unknown", "Undetermined", n.unknown],
-    ["review", "Needs review", n.needs_review]];
+    ["review", "Needs review", n.needs_review], ["drive", "Drive suspected", (n.drive_likely ?? 0) + (n.drive_possible ?? 0)],
+    ["effect", "Drive errors after", n.drive_effect ?? 0]];
   $("#tabBody").innerHTML = `
     <div class="row" style="margin-bottom:12px">
       ${f.map(([k, l, c]) => `<button class="fchip ${S.filter === k ? "on" : ""}" data-f="${k}">${l}<span class="badge">${c}</span></button>`).join("")}
@@ -306,7 +332,7 @@ function drawCycleRows() {
   const rows = filtered();
   const el = $("#cyc");
   if (!rows.length) { el.innerHTML = '<tr><td class="empty">Nothing matches this filter.</td></tr>'; return; }
-  el.innerHTML = `<thead><tr><th>ID</th><th>Time (${tzLabel()})</th><th>Type</th><th>Detail</th><th>Off / asleep</th><th>Confidence</th><th>Drive</th><th>Flags</th></tr></thead><tbody>
+  el.innerHTML = `<thead><tr><th>ID</th><th>Time (${tzLabel()})</th><th>Type</th><th>Detail</th><th>Off / asleep</th><th>Confidence</th><th>Drive</th><th>Drive caused it?</th><th>Flags</th></tr></thead><tbody>
     ${rows.map((it) => {
       const warn = it.flags.filter((x) => x.severity === "warn").length;
       return `<tr class="click ${S.selected === it.id ? "sel" : ""}" data-id="${it.id}">
@@ -314,6 +340,7 @@ function drawCycleRows() {
         <td>${esc(it.subtype)}${it.wake_source ? `<div class="muted small">wake: ${esc(it.wake_source)}</div>` : ""}</td>
         <td style="white-space:nowrap">${esc(it.type === "sleep" ? it.duration : it.gap)}</td>
         <td>${confBar(it.confidence)}</td><td>${stateChip(it.drive?.state)}</td>
+        <td>${it.type === "sleep" ? '<span class="muted">—</span>' : causeChip(it.drive)}</td>
         <td>${warn ? `<span class="flagdot">${ICON.warn}${warn}</span>` : it.flags.length ? `<span class="muted small">${it.flags.length} note${it.flags.length > 1 ? "s" : ""}</span>` : ""}</td></tr>`;
     }).join("")}</tbody>`;
   $$("tr.click", el).forEach((r) => (r.onclick = () => openDetail(r.dataset.id)));
@@ -337,10 +364,24 @@ function openDetail(id) {
     : [["Last sign of life", fmt(it.last_alive)], ["Clean stop logged", it.stop_time ? fmt(it.stop_time) : "—"], ["Next boot", fmt(it.boot_time)],
        ["Off for", it.gap], ["Boot type", it.boot_type || "not logged"]];
   const nFound = new Set(it.evidence_found.map((e) => e.signal)).size;
-  const win = (w, label) => !w ? "" : `<div class="win"><div class="win-h"><span>${label} · ${fmt(w.from)} → ${fmt(w.to)}</span>${stateChip(w.state)}</div>
-      ${w.events.length ? w.events.slice(0, 30).map((e) => `<div class="small" style="display:flex;gap:8px;padding:2px 0"><span class="mono muted">${fmt(e.time).slice(11)}</span>
-        <span class="mono">${e.eid}</span><span style="flex:1">${esc(e.label)} <span class="muted">· ${esc(e.provider)}</span></span>${stateChip(e.state)}</div>`).join("")
-        : `<div class="muted small">${w.state === "no data" ? "No log covers this window." : "No storage warnings or errors in this window."}${w.storport_covered ? "" : " Storport log not available here."}</div>`}</div>`;
+  const win = (w, label, from) => !w ? "" : `<div class="win"><div class="win-h"><span><b>${label}</b> · ${fmt(w.from)} → ${fmt(w.to)}</span>${stateChip(w.state)}</div>
+      ${w.events.length ? `<div class="wev">${w.events.map((e) => `
+        <div class="wrow ${e.state === "info" ? "info" : ""}" data-idx="${e.idx}" title="Click for the full event data">
+          <span class="off mono">${fmtOff(e.offset_s) || fmt(e.time).slice(11)}</span><span class="mono"><b>${e.eid}</b></span>
+          <div class="wx"><div>${esc(e.label)} <span class="muted">· ${esc(e.provider.replace("Microsoft-Windows-", ""))}</span></div>${e.fields ? `<div class="wf mono">${esc(e.fields)}</div>` : ""}</div>
+          ${stateChip(e.state)}</div><pre class="data" style="display:none"></pre>`).join("")}</div>
+        ${w.total > w.events.length ? `<div class="muted small">Showing the first ${w.events.length} of ${w.total} events.</div>` : ""}`
+        : `<div class="muted small">${w.state === "no data" ? "No log covers this window." : "No drive events in this window."}</div>`}
+      <div class="muted small" style="margin-top:4px">Offsets from the ${from}${w.storport_covered ? "" : " · Storport log not available for this time"}</div></div>`;
+  const d = it.drive || {};
+  const driveSec = `<div class="sec"><h4>Drive at this ${isSleep ? "sleep" : "power cycle"}</h4>
+      ${d.cause ? `<div class="assess">
+        ${isSleep ? "" : `<div class="a-row"><span>Did the drive cause it?</span>${causeChip(d)}</div>`}
+        <div class="a-row"><span>Effect on the drive</span>${effectChip(d)}</div>
+        <ul class="reasons">${d.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>`
+        : '<div class="note" style="margin-bottom:10px">Re-run the analysis to get the drive assessment for this case.</div>'}
+      ${win(d.before, isSleep ? "Before sleep" : "Before power-off", isSleep ? "sleep entry" : "last logged event")}
+      ${win(d.after, isSleep ? "After wake" : "After boot", isSleep ? "wake" : "boot")}</div>`;
   const anchor = (it.evidence_found[it.evidence_found.length - 1] || it.evidence_found[0])?.idx;
   openDrawer(`
     <div class="dr-h"><div style="flex:1">
@@ -349,6 +390,7 @@ function openDetail(id) {
       <button class="icon-btn dr-close" aria-label="Close">${ICON.x}</button></div>
     <div class="dr-b">
       <div class="sec"><dl class="kv">${kv.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl></div>
+      ${driveSec}
       <div class="sec"><h4>Confidence</h4>
         <div class="bigconf"><strong style="color:${confColor(it.confidence)}">${Math.round(it.confidence * 100)}%</strong>
           <div class="bar"><b style="width:${it.confidence * 100}%;background:${confColor(it.confidence)}"></b></div></div>
@@ -358,9 +400,19 @@ function openDetail(id) {
         <div class="evi"><span class="id">${e.eid}</span><div class="x"><b>${esc(e.label)}</b><div>${fmt(e.time)} · ${esc(e.provider)}${e.note ? `<br>${esc(e.note)}` : ""}</div></div>
         <button class="btn ghost small ctx" data-idx="${e.idx}" style="padding:3px 8px">context</button></div>`).join("") : '<div class="muted small">No direct evidence — verdict is inferred.</div>'}
         ${it.evidence_missing.map((m) => `<div class="evi miss"><span class="id">—</span><div class="x"><b>${esc(m)}</b><div>expected, not logged</div></div></div>`).join("")}</div>
-      <div class="sec"><h4>Drive around this point</h4>${win(it.drive?.before, isSleep ? "Before sleep" : "Before power-off")}${win(it.drive?.after, isSleep ? "After wake" : "After boot")}</div>
       <div class="sec"><h4>Raw events</h4><div id="rawBox"><button class="btn" id="rawBtn" data-idx="${anchor ?? ""}">${ICON.list} Show events around this point</button></div></div>
     </div>`);
+  $$(".wrow").forEach((r) => r.addEventListener("click", async () => {
+    const box = r.nextElementSibling;
+    if (box.style.display !== "none") { box.style.display = "none"; return; }
+    box.style.display = "";
+    if (box.textContent) return;
+    box.textContent = "Loading…";
+    try {
+      const [e] = await api(`/api/cases/${encodeURIComponent(S.c.id)}/events?around=${r.dataset.idx}&n=0`);
+      box.textContent = JSON.stringify(e?.data ?? {}, null, 1);
+    } catch (err) { box.textContent = err.message; }
+  }));
   $("#rawBtn")?.addEventListener("click", (e) => loadRaw(e.currentTarget.dataset.idx));
   $$(".ctx").forEach((b) => b.addEventListener("click", () => loadRaw(b.dataset.idx, true)));
 }
@@ -452,7 +504,7 @@ function drawTimeline() {
   // transitions
   const L1 = ly[1], L2 = ly[2];
   c.items.forEach((it) => {
-    const col = TYPES[it.type].color, tip = esc(`<b>${it.id} · ${TYPES[it.type].label}</b>${esc(it.subtype)}<br>${fmtTs(it.time_ts)} · ${Math.round(it.confidence * 100)}%${it.needs_review ? " · needs review" : ""}`);
+    const col = TYPES[it.type].color, tip = esc(`<b>${it.id} · ${TYPES[it.type].label}</b>${esc(it.subtype)}<br>${fmtTs(it.time_ts)} · ${Math.round(it.confidence * 100)}%${it.needs_review ? " · needs review" : ""}${isSuspect(it) ? `<br>Drive caused it? ${esc(it.drive.cause_label)}` : ""}`);
     if (it.type === "sleep") {
       const a = it.start_ts || it.end_ts, b = it.end_ts || it.start_ts; if (!vis(a, b)) return;
       const [xa, xb] = clipX(a, b);

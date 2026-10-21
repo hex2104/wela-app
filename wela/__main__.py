@@ -44,11 +44,16 @@ def main(argv=None):
     print(f"\n  {r['computer']}  {r['coverage']['start']} .. {r['coverage']['end']}")
     print(f"  shutdown {c['shutdown']}  restart {c['restart']}  hard {c['hard']}  undetermined {c['unknown']}  "
           f"sleep {c['sleep']}  hibernate {c['hibernate']}  modern-standby {c['modern_standby']}  "
-          f"needs review {c['needs_review']}\n")
+          f"needs review {c['needs_review']}")
+    print(f"  drive caused it: likely {c['drive_likely']}  possibly {c['drive_possible']}  "
+          f"no drive evidence {c['drive_no_evidence']}  can't tell {c['drive_unknown']}  "
+          f"drive errors after boot/wake {c['drive_effect']}\n")
     for it in r["items"]:
         mark = "!" if it["needs_review"] else " "
+        d = it["drive"]
+        cause = f"  caused it? {d['cause_label']}" if it["type"] != "sleep" else ""
         print(f" {mark} {it['id']:>4}  {it['time'][:19]}  {it['type']:<9} {it['subtype'][:44]:<44} "
-              f"{int(it['confidence'] * 100):>3}%  drive:{it['drive']['state']}")
+              f"{int(it['confidence'] * 100):>3}%  drive:{d['state']:<8}{cause}")
     if args.out:
         fmt = args.out.rsplit(".", 1)[-1].lower()
         fn = {"html": report.to_html, "xlsx": report.to_xlsx, "csv": report.to_csv}.get(fmt)

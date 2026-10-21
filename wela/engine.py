@@ -10,11 +10,14 @@ Pipeline
                 redundant evidence + timing, with a confidence score
   6. sleeps   - sleep / hibernate / Modern Standby episodes inside sessions,
                 rebuilt from 42 / 107 / Power-Troubleshooter 1 / 506 / 507
-  7. drive    - storage events in a +/- window around every transition
+  7. drive    - all storage events (Storport included, every level) in a window
+                before power-off / sleep and after boot / wake
+  8. assess   - did the drive cause the transition, and what was the effect on it
 """
 from __future__ import annotations
 
 import bisect
+import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -28,6 +31,17 @@ BOOT_SIGNALS = {"BOOT_OS_START", "BOOT_LOG_START", "BOOT_OS_VERSION", "BOOT_TYPE
 CLEAN_SIGNALS = ["SHUTDOWN_REQUEST", "OS_STOP", "LOG_STOP", "KP_SHUTDOWN_INIT", "USER_LOGOFF"]
 HARD_SIGNALS = ["KP_UNEXPECTED", "UNEXPECTED_PREV", "BUGCHECK"]
 BOOT_TYPE_NAMES = {0: "Cold boot", 1: "Hybrid boot (Fast Startup)", 2: "Resume from hibernate"}
+CAUSE_LABELS = {"likely": "Likely", "possible": "Possibly", "no_evidence": "No drive evidence", "unknown": "Can't tell"}
+EFFECT_LABELS = {"missing": "Drive missing after {on}", "errors": "Errors after {on}", "warnings": "Warnings after {on}",
+                 "none": "Healthy after {on}", "unknown": "No data after {on}"}
+# SCSI opcodes as seen in Storport events (NVMe I/O is translated to SCSI by stornvme)
+SCSI_OPS = {0x00: "TEST UNIT READY", 0x03: "REQUEST SENSE", 0x12: "INQUIRY", 0x1A: "MODE SENSE(6)",
+            0x1B: "START STOP UNIT", 0x25: "READ CAPACITY(10)", 0x28: "READ(10)", 0x2A: "WRITE(10)",
+            0x35: "SYNCHRONIZE CACHE(10)", 0x42: "UNMAP", 0x4D: "LOG SENSE", 0x5A: "MODE SENSE(10)",
+            0x88: "READ(16)", 0x8A: "WRITE(16)", 0x91: "SYNCHRONIZE CACHE(16)", 0x9E: "SERVICE ACTION IN(16)",
+            0xA0: "REPORT LUNS"}
+# event data keys shown first in the per-event field summary
+FIELD_HINTS = ("opcode", "status", "sense", "asc", "error", "reason", "latency", "duration", "timeout", "reset")
 
 
 # --------------------------------------------------------------------------- helpers
@@ -78,6 +92,24 @@ def _fmt_dur(sec: Optional[float]) -> str:
     return f"{sec // 86400}d {(sec % 86400) // 3600}h"
 
 
+def _fields(data: dict, limit: int = 8) -> str:
+    """Short 'key=value' summary of an event's data, most diagnostic keys first."""
+    items = [(k, str(v).strip()) for k, v in (data or {}).items() if str(v).strip()]
+    items.sort(key=lambda kv: 0 if any(h in kv[0].lower() for h in FIELD_HINTS) else 1)
+    out = []
+    for k, v in items[:limit]:
+        s = f"{k}={v[:60]}"
+        op = _int(v) if "opcode" in k.lower() else None
+        if op in SCSI_OPS:
+            s += f" ({SCSI_OPS[op]})"
+        out.append(s)
+    return "  ".join(out)
+
+
+def _counts_text(counts: dict) -> str:
+    return ", ".join(f"{label} x{n}" for label, n in sorted(counts.items(), key=lambda kv: -kv[1]))
+
+
 class Analyzer:
     def __init__(self, events: List[Event], cfg: dict = None, sources: List[dict] = None):
         self.cfg = cfg or DEFAULTS
@@ -106,7 +138,9 @@ class Analyzer:
         for e in self.events:
             p = e.provider.lower()
             e.signal = sig.get((p, e.eid))
-            hit = exact.get((p, e.eid)) or wild.get(p)
+            hit = exact.get((p, e.eid))
+            if hit is None and p in wild:
+                hit = (f"{wild[p][0]} {e.eid}", wild[p][1])
             if hit is None and channel_kind(e.channel) == "storport":
                 hit = (f"Storport event {e.eid}", "auto")
             if hit is None and e.level in (1, 2, 3) and any(h in p for h in hints):
@@ -412,10 +446,14 @@ class Analyzer:
             clean_score = min(1.0, sum(W["clean"].get(x, 0) for x in stop))
             stop_time = max((e.ts for e in stop.values()), default=None)
             t = {"type": None, "subtype": None, "boot_index": k}
+            bc = 0
 
             if hard:
                 e41 = hard.get("KP_UNEXPECTED")
                 bc = _int(e41.data.get("BugcheckCode"), 0) if e41 else 0
+                if not bc and "BUGCHECK" in hard:  # 1001 param1 starts with the code, e.g. "0x0000009f (...)"
+                    m = re.search(r"0x[0-9a-fA-F]+", hard["BUGCHECK"].data.get("param1", ""))
+                    bc = int(m.group(0), 16) if m else 0
                 pbt = _int(e41.data.get("PowerButtonTimestamp"), 0) if e41 else 0
                 sip = _int(e41.data.get("SleepInProgress"), 0) if e41 else 0
                 score = sum(W["hard"].get(x, 0) for x in hard)
@@ -501,42 +539,58 @@ class Analyzer:
                 "boot_type": BOOT_TYPE_NAMES.get(boot_type) if boot_type is not None else None,
                 "gap_s": round(gap_s) if gap_s is not None else None,
                 "gap": _fmt_dur(gap_s) if gap_s is not None else "?",
+                "bugcheck": bc or None,
                 "confidence": conf, "evidence_found": found, "evidence_missing": missing, "flags": flags,
             })
             transitions.append(t)
         self.transitions = transitions
 
     # ------------------------------------------------------------------ 7. drive correlation
-    def _storage_between(self, t0: float, t1: float) -> List[Event]:
+    def _storage_between(self, t0: float, t1: float, info: bool = False) -> List[Event]:
         i = bisect.bisect_left(self.storage_times, t0)
         j = bisect.bisect_right(self.storage_times, t1)
-        return [e for e in self.storage[i:j] if e.storage["state"] != "info"]
+        return [e for e in self.storage[i:j] if info or e.storage["state"] != "info"]
 
-    def _window(self, t0: float, t1: float) -> dict:
-        evs = self._storage_between(t0, t1)
-        if evs:
-            state = max((e.storage["state"] for e in evs), key=lambda x: STATE_RANK.get(x, 0))
-        else:
-            state = "healthy" if self._covered("system", t0, t1) or self._covered("storport", t0, t1) else "no data"
-        counts = Counter(e.storage["label"] for e in evs)
-        return {"state": state, "from": iso(datetime.fromtimestamp(t0, timezone.utc)),
+    def _is_platform(self, e: Event) -> bool:
+        p = e.provider.lower()
+        return any(h in p for h in self.cfg.get("platform_provider_hints", []))
+
+    def _window(self, t0: float, t1: float, anchor: float) -> dict:
+        """Every storage event in [t0, t1]; informational ones are listed but do not change the state."""
+        evs = self._storage_between(t0, t1, info=True)
+        bad = [e for e in evs if e.storage["state"] != "info"]
+        covered = self._covered("system", t0, t1) or self._covered("storport", t0, t1)
+
+        def worst(xs):
+            if xs:
+                return max((e.storage["state"] for e in xs), key=lambda x: STATE_RANK.get(x, 0))
+            return "healthy" if covered else "no data"
+
+        return {"state": worst(bad), "drive_state": worst([e for e in bad if not self._is_platform(e)]),
+                "from": iso(datetime.fromtimestamp(t0, timezone.utc)),
                 "to": iso(datetime.fromtimestamp(t1, timezone.utc)),
+                "anchor": iso(datetime.fromtimestamp(anchor, timezone.utc)),
                 "storport_covered": self._covered("storport", t0, t1),
-                "counts": dict(counts),
-                "events": [{"idx": e.idx, "time": iso(e.time), "provider": e.provider, "eid": e.eid,
-                            "label": e.storage["label"], "state": e.storage["state"], "level": e.level}
-                           for e in evs[:200]]}
+                "counts": dict(Counter(e.storage["label"] for e in bad)),
+                "platform_counts": dict(Counter(e.storage["label"] for e in bad if self._is_platform(e))),
+                "first_issue_s": round(bad[0].ts - anchor, 1) if bad else None,
+                "last_issue_s": round(bad[-1].ts - anchor, 1) if bad else None,
+                "total": len(evs), "info_count": len(evs) - len(bad),
+                "events": [{"idx": e.idx, "time": iso(e.time), "offset_s": round(e.ts - anchor, 1),
+                            "provider": e.provider, "eid": e.eid, "channel": e.channel,
+                            "label": e.storage["label"], "state": e.storage["state"], "level": e.level,
+                            "fields": _fields(e.data)} for e in evs[:300]]}
 
     def correlate(self):
         w = self.s["drive_window_s"]
 
         def attach(item, t_before, t_after):
-            pre = self._window(t_before - w, t_before + 5) if t_before else None
-            post = self._window(t_after, t_after + w) if t_after else None
+            pre = self._window(t_before - w, t_before + 5, t_before) if t_before else None
+            post = self._window(t_after, t_after + w, t_after) if t_after else None
             states = [x["state"] for x in (pre, post) if x]
             real = [x for x in states if x != "no data"]
             state = max(real, key=lambda x: STATE_RANK.get(x, 0)) if real else "no data"
-            item["drive"] = {"state": state, "before": pre, "after": post,
+            item["drive"] = {"state": state, "window_s": w, "before": pre, "after": post,
                              "storport_covered": any(x["storport_covered"] for x in (pre, post) if x)}
             if not item["drive"]["storport_covered"] and self._covered("storport", 0, 1e12):
                 item["flags"].append(_flag("info", "Storport log does not cover this time"))
@@ -545,6 +599,100 @@ class Analyzer:
             attach(t, t["last_alive_ts"], t["boot_ts"])
         for sl in self.sleeps:
             attach(sl, sl["start_ts"], sl["end_ts"])
+
+    # ------------------------------------------------------------------ 8. did the drive cause it?
+    def _bugcheck_info(self, code: Optional[int]) -> Optional[Tuple[str, str]]:
+        for k, (name, strength) in self.cfg.get("storage_bugchecks", {}).items():
+            if code and _int(k) == code:
+                return name, strength
+        return None
+
+    def assess(self):
+        for t in self.transitions:
+            self._assess(t, sleep=False)
+        for sl in self.sleeps:
+            self._assess(sl, sleep=True)
+
+    def _assess(self, it: dict, sleep: bool):
+        d, w = it["drive"], round(self.s["drive_window_s"])
+        pre, post = d["before"], d["after"]
+        off, on = ("sleep", "wake") if sleep else ("power-off", "boot")
+        quiet = ("healthy", "no data")
+
+        def coverage_note(win):
+            note = "" if win["storport_covered"] else " (no Storport log for this time - only System-log disk events checked)"
+            return note + (f"; {win['info_count']} informational event(s)" if win["info_count"] else "")
+
+        before, after, notes = [], [], []
+        if pre is None:
+            before.append("Sleep start not logged - the drive before it can't be checked" if sleep
+                          else "The log has nothing before this boot")
+        elif pre["state"] == "no data":
+            before.append(f"No log covers the {w} s before {off}")
+        elif pre["state"] not in quiet:
+            last = pre["last_issue_s"]
+            if last >= -0.5:
+                when = "the last one right at sleep entry" if sleep else "a drive event was the last thing logged"
+            else:
+                when = f"the last one {abs(last):.0f} s before " + ("sleep" if sleep else "the last logged event")
+            before.append(f"{w} s before {off}: {_counts_text(pre['counts'])} - {when}")
+        else:
+            before.append(f"No drive warnings or errors in the {w} s before {off}" + coverage_note(pre))
+
+        if post is None:
+            after.append("No wake logged - the session ended while asleep")
+        elif post["state"] == "no data":
+            after.append(f"No log covers the {w} s after {on}")
+        elif post["state"] not in quiet:
+            after.append(f"{w} s after {on}: {_counts_text(post['counts'])} - "
+                         f"the first one {post['first_issue_s']:.0f} s after {on}")
+        else:
+            after.append(f"No drive warnings or errors in the {w} s after {on}" + coverage_note(post))
+
+        typ = it["type"]
+        if sleep:
+            cause, cause_label = "n/a", "n/a"
+        elif typ in ("shutdown", "restart"):
+            cause, cause_label = "n/a", "No (orderly)"
+            if pre and pre["state"] not in quiet:
+                notes.append("The shutdown was orderly, so these drive problems did not cause it - "
+                             "but check for failed writes or flushes")
+        else:
+            bc = it.get("bugcheck")
+            bci = self._bugcheck_info(bc)
+            ds = pre["drive_state"] if pre else None
+            ps = pre["state"] if pre else None
+            if bci:
+                before.append(f"Crash code 0x{bc:X} ({bci[0]}) " +
+                              ("points at storage" if bci[1] == "strong" else "is sometimes caused by storage"))
+            if (bci and bci[1] == "strong") or ds in ("missing", "reset", "error"):
+                cause = "likely"
+            elif bci or ds in ("slow", "warning") or ps not in (None, "healthy", "no data"):
+                cause = "possible"
+            elif ps == "healthy":
+                cause = "no_evidence"
+            else:
+                cause = "unknown"
+            if pre and pre["platform_counts"] and ds in quiet:
+                notes.append("Only platform (WHEA) hardware errors were logged - they may come from another device")
+            if typ == "unknown":
+                cause = {"likely": "possible", "no_evidence": "unknown"}.get(cause, cause)
+                notes.append("How this session ended is undetermined, so the drive verdict is uncertain too")
+            if cause == "no_evidence":
+                notes.append("A quiet log does not clear the drive: Windows keeps its logs on the system drive, so if that "
+                             "drive froze suddenly its last events may never have been saved - cross-check the drive's "
+                             "own SMART and error logs")
+            if cause in ("likely", "possible") and any(x in it["subtype"].lower() for x in ("hang", "long-press")):
+                notes.append("Drive trouble right before a hang or forced power-off fits a drive that stopped responding")
+            cause_label = CAUSE_LABELS[cause]
+
+        if post is None or post["state"] == "no data":
+            effect = "unknown"
+        else:
+            effect = {"missing": "missing", "reset": "errors", "error": "errors", "slow": "warnings",
+                      "warning": "warnings"}.get(post["drive_state"], "none" if post["state"] == "healthy" else "warnings")
+        d.update(cause=cause, cause_label=cause_label, effect=effect,
+                 effect_label=EFFECT_LABELS[effect].format(on=on), reasons=before + after + notes)
 
     # ------------------------------------------------------------------ extra data-quality checks
     def quality(self):
@@ -600,6 +748,7 @@ class Analyzer:
         self.find_sleeps()
         self.classify()
         self.correlate()
+        self.assess()
         self.quality()
         self.inventory()
         thr = self.s["review_threshold"]
@@ -620,6 +769,8 @@ class Analyzer:
         computers = Counter(e.computer for e in self.events if e.computer)
         storage_counts = Counter(e.storage["label"] for e in self.storage if e.storage["state"] != "info")
         flags_total = sum(len(x["flags"]) for x in items)
+        causes = Counter(t["drive"]["cause"] for t in self.transitions)
+        effects = Counter(x["drive"]["effect"] for x in items)
         return {
             "wela_version": __version__,
             "generated": iso(datetime.now(timezone.utc)),
@@ -638,6 +789,9 @@ class Analyzer:
                 "modern_standby": sleep_kinds.get("modern_standby", 0),
                 "boots": len(self.boots), "power_cycles": len(self.transitions),
                 "needs_review": sum(1 for x in items if x["needs_review"]), "flags": flags_total,
+                "drive_likely": causes.get("likely", 0), "drive_possible": causes.get("possible", 0),
+                "drive_no_evidence": causes.get("no_evidence", 0), "drive_unknown": causes.get("unknown", 0),
+                "drive_effect": effects.get("errors", 0) + effects.get("missing", 0),
             },
             "hard_breakdown": dict(hard_breakdown),
             "storage_counts": dict(storage_counts),
