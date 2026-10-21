@@ -1,0 +1,7 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "WELA: start UI", "type": "shell", "command": "python run_wela.py", "problemMatcher": [] },
+    { "label": "WELA: run tests", "type": "shell", "command": "python -m unittest discover -s tests -v", "group": "test", "problemMatcher": [] }
+  ]
+}

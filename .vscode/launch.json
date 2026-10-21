@@ -1,0 +1,32 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "WELA: start UI",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/run_wela.py",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "WELA: analyze a folder (CLI)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "wela",
+      "args": ["analyze", "${input:logPath}", "--out", "${workspaceFolder}/report.html", "--tz", "330"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "WELA: run tests",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "unittest",
+      "args": ["discover", "-s", "tests", "-v"],
+      "console": "integratedTerminal"
+    }
+  ],
+  "inputs": [
+    { "id": "logPath", "type": "promptString", "description": "Folder or .evtx file to analyze" }
+  ]
+}

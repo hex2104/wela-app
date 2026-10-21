@@ -1,0 +1,7 @@
+{
+  "python.testing.unittestEnabled": true,
+  "python.testing.pytestEnabled": false,
+  "python.testing.unittestArgs": ["-v", "-s", "./tests", "-p", "test_*.py"],
+  "files.exclude": { "**/__pycache__": true },
+  "editor.rulers": [120]
+}

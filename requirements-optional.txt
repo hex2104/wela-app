@@ -1,0 +1,3 @@
+# WELA needs NO packages on Windows (it uses the built-in wevtutil).
+# Only needed to read .evtx files on Linux/macOS:
+python-evtx
