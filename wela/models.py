@@ -19,7 +19,8 @@ class Event:
     source: str = ""               # file it came from
     idx: int = 0                   # global index after sorting
     signal: Optional[str] = None   # power signal tag (set by engine)
-    storage: Optional[dict] = None # storage classification (set by engine)
+    storage: Optional[dict] = None # storage classification + drive identity (set by engine)
+    software: Optional[dict] = None  # app / update / service classification (set by engine)
 
     @property
     def ts(self) -> float:
@@ -39,6 +40,8 @@ class Event:
             d["signal"] = self.signal
         if self.storage:
             d["storage"] = self.storage
+        if self.software:
+            d["software"] = self.software
         if full:
             d["data"] = self.data
             d["computer"] = self.computer

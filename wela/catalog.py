@@ -68,6 +68,21 @@ DEFAULTS = {
         "explicit_type_bonus": 0.10,  # 1074 states restart / power off
         "conflict_penalty": 0.25,
         "integrity_penalty": 0.30,
+        # "what triggered it?" (software) - same 0..1 scale, capped at 1.0
+        "software": {
+            "initiator": 0.70,          # 1074 names the process that asked for the shutdown / restart
+            "reason_agrees": 0.15,      # its reason code points the same way as the process
+            "supporting_events": 0.15,  # e.g. Windows Update / installer events before it
+            "restart_logged": 0.60,     # no 1074, but an installer / update / service logged that it restarts the PC
+            "restart_pending": 0.35,    # no 1074, but an update or install was waiting for a restart
+            "critical_crash": 0.50,     # a system process (csrss, lsass, ...) crashed before a hard shutdown
+            "critical_bugcheck": 0.20,  # ... and the crash code is the one Windows uses for that
+            "work_in_progress": 0.40,   # an update / install was still running when it went down
+            "hang": 0.35,               # apps or services hung right before a hang / forced power-off
+            "driver": 0.30,             # display driver stopped responding before it
+            "crash": 0.25,              # an ordinary app crashed before it
+            "drive_conflict": 0.15,     # drive also had problems: the software events may only be a symptom
+        },
     },
 
     # ---- storage events: [provider (case-insensitive), event id or "*", label, state]
@@ -120,6 +135,99 @@ DEFAULTS = {
         "0x154": ["UNEXPECTED_STORE_EXCEPTION", "possible"],
     },
 
+    # ---- which drive an event belongs to -------------------------------------
+    # Vendor rules, first match wins:
+    #   names   - regex searched in every value of the event (case-insensitive)
+    #   pci     - PCI vendor IDs, matched as VEN_xxxx in device paths (e.g. WHEA PrimaryDeviceName)
+    #   models  - regex on model / product fields only (part numbers without the vendor name)
+    # Intel and AMD have no PCI ID here on purpose: their IDs also name the CPU's own PCIe root ports.
+    "drive_vendors": [
+        ["Samsung", {"names": [r"\bsamsung\b"], "pci": ["144D"], "models": [r"(?<![A-Za-z0-9])MZ[-_]?[0-9A-Z]{6,}"]}],
+        ["Western Digital", {"names": [r"\bwdc\b", r"\bwestern digital\b", r"\bsandisk\b", r"\bwd[_ ](black|blue|green|red)\b"],
+                             "pci": ["15B7", "1B96"], "models": []}],
+        ["SK hynix", {"names": [r"\bsk ?hynix\b", r"\bhynix\b"], "pci": ["1C5C"], "models": [r"(?<![A-Za-z0-9])HF[SM][0-9]{3}"]}],
+        ["Kioxia / Toshiba", {"names": [r"\bkioxia\b", r"\btoshiba\b"], "pci": ["1E0F", "1179"], "models": []}],
+        ["Micron / Crucial", {"names": [r"\bmicron\b", r"\bcrucial\b"], "pci": ["1344"],
+                              "models": [r"(?<![A-Za-z0-9])MTFD[A-Z0-9]{4,}"]}],
+        ["Intel / Solidigm", {"names": [r"\bintel\b", r"\bsolidigm\b"], "pci": ["025E"], "models": []}],
+        ["Seagate", {"names": [r"\bseagate\b"], "pci": ["1BB1"], "models": []}],
+        ["Kingston", {"names": [r"\bkingston\b"], "pci": ["2646"], "models": []}],
+        ["Phison", {"names": [r"\bphison\b"], "pci": ["1987"], "models": []}],
+        ["Silicon Motion", {"names": [r"\bsilicon motion\b"], "pci": ["126F"], "models": []}],
+        ["ADATA", {"names": [r"\badata\b"], "pci": ["1CC1"], "models": []}],
+        ["Lite-On / SSSTC", {"names": [r"\blite-?on\b", r"\bssstc\b"], "pci": ["14A4"], "models": []}],
+    ],
+    # events on this vendor's drives are highlighted everywhere
+    "highlight_vendor": "Samsung",
+
+    # ---- software / application events: [provider, event id, label, group, kind]
+    # group: app / update / install / service / system
+    # kind:  crash, hang, report, done, start, end, fail, restart (waiting for a restart),
+    #        reboot (restarts the PC itself), driver, memory, power
+    # The engine refines some rows from their data: Windows Error Reporting 1001 by its event name
+    # (BlueScreen, APPCRASH, AppHangB1 ...), a crash of a critical_processes entry, and 7031 whose
+    # recovery action is "Restart the computer".
+    "software_events": [
+        ["Application Error", 1000, "Application crashed", "app", "crash"],
+        ["Application Hang", 1002, "Application hung", "app", "hang"],
+        [".NET Runtime", 1026, ".NET application crashed", "app", "crash"],
+        ["Windows Error Reporting", 1001, "Error report", "app", "report"],
+        ["Microsoft-Windows-WindowsUpdateClient", 19, "Update installed", "update", "done"],
+        ["Microsoft-Windows-WindowsUpdateClient", 20, "Update failed to install", "update", "fail"],
+        ["Microsoft-Windows-WindowsUpdateClient", 21, "Update needs a restart", "update", "restart"],
+        ["Microsoft-Windows-WindowsUpdateClient", 22, "Update restart scheduled", "update", "reboot"],
+        ["Microsoft-Windows-WindowsUpdateClient", 43, "Update installation started", "update", "start"],
+        ["Microsoft-Windows-Servicing", 2, "Windows package installed", "update", "done"],
+        ["Microsoft-Windows-Servicing", 4, "Windows package needs a restart", "update", "restart"],
+        ["MsiInstaller", 1033, "Software installed", "install", "done"],
+        ["MsiInstaller", 1034, "Software removed", "install", "done"],
+        ["MsiInstaller", 1035, "Software reconfigured", "install", "done"],
+        ["MsiInstaller", 1036, "Software update installed", "install", "done"],
+        ["MsiInstaller", 1037, "Software update removed", "install", "done"],
+        ["MsiInstaller", 11707, "Installation completed", "install", "done"],
+        ["MsiInstaller", 11724, "Removal completed", "install", "done"],
+        ["MsiInstaller", 11708, "Installation failed", "install", "fail"],
+        ["MsiInstaller", 1038, "Installer needs a restart", "install", "restart"],
+        ["MsiInstaller", 1005, "Installer restarted the PC", "install", "reboot"],
+        ["MsiInstaller", 1040, "Installer transaction started", "install", "start"],
+        ["MsiInstaller", 1042, "Installer transaction ended", "install", "end"],
+        ["Service Control Manager", 7031, "Service crashed", "service", "crash"],
+        ["Service Control Manager", 7034, "Service crashed", "service", "crash"],
+        ["Service Control Manager", 7023, "Service stopped with an error", "service", "crash"],
+        ["Service Control Manager", 7024, "Service stopped with an error", "service", "crash"],
+        ["Service Control Manager", 7043, "Service held up shutdown", "service", "hang"],
+        ["Service Control Manager", 7022, "Service hung on start", "service", "hang"],
+        ["Service Control Manager", 7011, "Service timed out", "service", "hang"],
+        ["Display", 4101, "Display driver stopped responding", "system", "driver"],
+        ["Microsoft-Windows-Resource-Exhaustion-Detector", 2004, "Low on memory", "system", "memory"],
+        ["Microsoft-Windows-Kernel-Power", 105, "Power source changed", "system", "power"],
+    ],
+    # a crash of one of these makes Windows crash (0xEF / 0xF4) or restart
+    "critical_processes": ["csrss.exe", "wininit.exe", "winlogon.exe", "lsass.exe", "smss.exe", "services.exe"],
+    "critical_bugchecks": ["0xEF", "0xF4"],
+    # who asked for a shutdown / restart: substring of the 1074 process path (lower-case) -> category.
+    # First match wins, so specific entries come before generic ones ("setuphost" before "setup").
+    "shutdown_initiators": [
+        ["trustedinstaller.exe", "update"], ["tiworker.exe", "update"], ["mousocoreworker.exe", "update"],
+        ["usoclient.exe", "update"], ["wuauclt.exe", "update"], ["musnotification", "update"],
+        ["setuphost.exe", "update"], ["sihclient.exe", "update"], ["windows10upgrade", "update"],
+        ["updateassistant", "update"], ["\\$windows.~bt\\", "update"],
+        ["\\dell\\", "vendor"], ["dcu-cli", "vendor"], ["supportassist", "vendor"], ["\\lenovo\\", "vendor"],
+        ["thininstaller", "vendor"], ["\\hp\\", "vendor"], ["hpsa", "vendor"], ["magician", "vendor"],
+        ["firmware", "vendor"], ["bios", "vendor"],
+        ["ccmexec.exe", "management"], ["ccmrestart", "management"], ["omadmclient.exe", "management"],
+        ["deviceenroller.exe", "management"], ["intunemanagementextension", "management"],
+        ["agentexecutor.exe", "management"], ["gpscript.exe", "management"], ["wmiprvse.exe", "management"],
+        ["msiexec.exe", "installer"], ["setup", "installer"], ["install", "installer"], ["uninst", "installer"],
+        ["shutdown.exe", "script"], ["powershell.exe", "script"], ["pwsh.exe", "script"], ["cmd.exe", "script"],
+        ["wscript.exe", "script"], ["cscript.exe", "script"],
+        ["services.exe", "service"],
+        ["wininit.exe", "system"], ["lsass.exe", "system"], ["csrss.exe", "system"],
+        ["explorer.exe", "user"], ["runtimebroker.exe", "user"], ["startmenuexperiencehost.exe", "user"],
+        ["shellexperiencehost.exe", "user"], ["shellhost.exe", "user"], ["winlogon.exe", "user"],
+        ["logonui.exe", "user"],
+    ],
+
     # ---- timing / thresholds (seconds) ---------------------------------------
     "settings": {
         "boot_cluster_s": 180,        # boot markers within this span = one boot
@@ -128,6 +236,9 @@ DEFAULTS = {
         "restart_gap_s": 300,         # stop -> boot gap below this = restart (when 1074 silent)
         "long_restart_gap_s": 1800,   # 1074 says restart but gap longer -> flag
         "drive_window_s": 60,         # drive window before power-off / sleep and after boot / wake
+        "software_window_s": 900,     # app / update / service events this long before power-off / sleep
+        "software_after_s": 600,      # ... and this long after boot / wake
+        "running_lookback_s": 3600,   # an update / install started this recently and never finished = still running
         "pt1_merge_s": 300,           # Power-Troubleshooter 1 merges into a nearby resume
         "unexplained_gap_s": 7200,    # quiet gap inside a session worth flagging
         "time_change_flag_s": 300,    # clock jump bigger than this is flagged

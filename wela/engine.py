@@ -10,9 +10,16 @@ Pipeline
                 redundant evidence + timing, with a confidence score
   6. sleeps   - sleep / hibernate / Modern Standby episodes inside sessions,
                 rebuilt from 42 / 107 / Power-Troubleshooter 1 / 506 / 507
+  identify    - tie every storage event to a physical drive (named in the event,
+                via its disk number + the Partition inventory, or - marked as
+                "probably" - the only drive in that boot) and flag the
+                highlighted vendor's (Samsung's) drives
   7. drive    - all storage events (Storport included, every level) in a window
                 before power-off / sleep and after boot / wake
-  8. assess   - did the drive cause the transition, and what was the effect on it
+  8. assess   - did the drive cause the transition, what was the effect on it,
+                which drive had the problems, and what triggered it on the
+                software side (1074 initiator, updates, installers, app crashes
+                and hangs, service failures)
 """
 from __future__ import annotations
 
@@ -42,6 +49,46 @@ SCSI_OPS = {0x00: "TEST UNIT READY", 0x03: "REQUEST SENSE", 0x12: "INQUIRY", 0x1
             0xA0: "REPORT LUNS"}
 # event data keys shown first in the per-event field summary
 FIELD_HINTS = ("opcode", "status", "sense", "asc", "error", "reason", "latency", "duration", "timeout", "reset")
+
+# ---- drive identity
+HL_LABELS = {"yes": "{v} drive", "probably": "Probably the {v} drive", "no": "Another drive",
+             "unknown": "Drive not identified", "none": "No drive problems"}
+GENERIC_VENDOR_IDS = {"NVME", "ATA", "SCSI", "STANDARD", "(STANDARD DISK DRIVES)", "GENERIC"}
+_HARDDISK = re.compile(r"(?<![A-Za-z])Harddisk(\d+)(?![0-9A-Za-z])", re.I)   # \Device\Harddisk0\DR0, not HarddiskVolume3
+_PCI_VEN = re.compile(r"VEN_([0-9A-F]{4})", re.I)
+_EUI64 = re.compile(r"([0-9A-F]{4}_){3}[0-9A-F]{4}\.?", re.I)                 # NVMe serial as some Windows builds report it
+
+# ---- software: shutdown reason codes (winuser.h SHTDN_REASON_*) - the same in every Windows language
+REASON_MAJOR = {0x0: "Other", 0x1: "Hardware", 0x2: "Operating System", 0x3: "Software", 0x4: "Application",
+                0x5: "System", 0x6: "Power", 0x7: "Legacy API"}
+REASON_MINOR = {0x0: "Other", 0xFF: "None", 0x1: "Maintenance", 0x2: "Installation", 0x3: "Upgrade", 0x4: "Reconfigure",
+                0x5: "Hung", 0x6: "Unstable", 0x7: "Disk", 0x8: "Processor", 0x9: "Network card", 0xA: "Power supply",
+                0xB: "Cord unplugged", 0xC: "Environment", 0xD: "Hardware driver", 0xE: "Other driver",
+                0xF: "Blue screen", 0x10: "Service pack", 0x11: "Hotfix", 0x12: "Security fix", 0x13: "Security",
+                0x14: "Network connectivity", 0x15: "WMI", 0x16: "Service pack uninstall", 0x17: "Hotfix uninstall",
+                0x18: "Security fix uninstall", 0x19: "MMC", 0x1A: "System restore", 0x20: "Terminal Services",
+                0x21: "DC promotion", 0x22: "DC demotion"}
+TRIGGER_LABELS = {
+    "update": "Windows Update", "installer": "Software installer", "vendor": "OEM / vendor tool",
+    "management": "IT management tool", "service": "Service failure", "critical": "System process crash",
+    "script": "Command or script", "user": "User request", "app": "Application request", "system": "Windows",
+    "hardware": "Hardware reason given", "power": "Power reason given", "unstable": "System unstable",
+    "update_running": "Update was installing", "install_running": "Install was running",
+    "hang": "Apps / services hung", "crash": "App crashed", "driver": "Display driver timeout",
+    "not_logged": "Not logged", "none": "No software evidence", "unknown": "Can't tell", "n/a": "n/a",
+}
+STRENGTH_LABELS = {"confirmed": "Confirmed", "likely": "Likely", "possible": "Possibly", "none": "No software evidence",
+                   "unknown": "Can't tell", "n/a": "n/a"}
+# Windows Error Reporting 1001 event names -> (kind, label)
+WER_KINDS = {"bluescreen": ("bluescreen", "Crash report: blue screen"),
+             "livekernelevent": ("kernel", "Kernel problem report (LiveKernelEvent)"),
+             "appcrash": ("crash", "Crash report"), "bex": ("crash", "Crash report"), "bex64": ("crash", "Crash report"),
+             "moappcrash": ("crash", "Crash report"), "clr20r3": ("crash", "Crash report (.NET)"),
+             "apphangb1": ("hang", "Hang report"), "apphangxprocb1": ("hang", "Hang report"),
+             "moapphang": ("hang", "Hang report")}
+SW_ERROR = {"crash", "critical", "bluescreen", "fail"}
+SW_WARN = {"hang", "kernel", "driver", "memory", "reboot"}
+SW_FOUND = ("confirmed", "likely", "possible")
 
 
 # --------------------------------------------------------------------------- helpers
@@ -106,8 +153,68 @@ def _fields(data: dict, limit: int = 8) -> str:
     return "  ".join(out)
 
 
+def _span(sec: float) -> str:
+    """Window length: '15 min' rather than '15m 0s'."""
+    return f"{int(sec) // 60} min" if sec >= 60 and int(sec) == sec and int(sec) % 60 == 0 else _fmt_dur(sec)
+
+
 def _counts_text(counts: dict) -> str:
     return ", ".join(f"{label} x{n}" for label, n in sorted(counts.items(), key=lambda kv: -kv[1]))
+
+
+def _dt(ts: float) -> Optional[str]:
+    return iso(datetime.fromtimestamp(ts, timezone.utc))
+
+
+def _norm(s) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(s or "").upper())
+
+
+def _serial(s) -> str:
+    """Normalised serial number; '' for missing or placeholder (all-zero) serials."""
+    n = _norm(s)
+    return n if n.strip("0") else ""
+
+
+def _same_drive(a: dict, b: dict) -> bool:
+    sa, sb = _serial(a.get("serial")), _serial(b.get("serial"))
+    ma, mb = _norm(a.get("model")), _norm(b.get("model"))
+    models = bool(ma and mb and min(len(ma), len(mb)) >= 6 and (ma.startswith(mb) or mb.startswith(ma)))
+    if sa and sb:
+        if sa == sb:
+            return True
+        # one log may report an NVMe drive's EUI-64 ("0025_3881_...") instead of its serial
+        return models and bool(_EUI64.fullmatch(str(a["serial"]).strip())) != bool(_EUI64.fullmatch(str(b["serial"]).strip()))
+    return models
+
+
+def _reason(code: Optional[int]) -> Tuple[Optional[str], str, bool]:
+    """Decode a 1074 reason code -> (category or None, text, planned)."""
+    if code is None:
+        return None, "", False
+    major, minor, planned = (code >> 16) & 0xFF, code & 0xFFFF, bool(code & 0x80000000)
+    text = (f"{REASON_MAJOR.get(major, f'major 0x{major:X}')}: {REASON_MINOR.get(minor, f'minor 0x{minor:X}')} "
+            f"({'planned' if planned else 'unplanned'})")
+    if major == 0x2 and minor in (0x3, 0x10, 0x11, 0x12, 0x16, 0x17, 0x18):
+        cat = "update"
+    elif major in (0x3, 0x4) and minor in (0x1, 0x2, 0x3):
+        cat = "installer"
+    elif minor in (0x5, 0x6, 0xF):
+        cat = "unstable"
+    elif major == 0x1:
+        cat = "hardware"
+    elif major == 0x6:
+        cat = "power"
+    else:
+        cat = None
+    return cat, text, planned
+
+
+def _rx(pattern: str, flags: int = 0):
+    try:
+        return re.compile(pattern, flags)
+    except re.error as exc:
+        raise ValueError(f"Bad pattern {pattern!r} in the drive vendor rules: {exc}") from exc
 
 
 class Analyzer:
@@ -121,6 +228,11 @@ class Analyzer:
             e.idx = i
         self.events = events
         self.times = [e.ts for e in events]
+        self.hl_vendor = self.cfg.get("highlight_vendor") or ""
+        self.vendors = [(name, [_rx(x, re.I) for x in rule.get("names", [])], {str(p).upper() for p in rule.get("pci", [])},
+                         [_rx(x) for x in rule.get("models", [])]) for name, rule in self.cfg.get("drive_vendors", [])]
+        self.critical = {p.lower() for p in self.cfg.get("critical_processes", [])}
+        self._requests: Dict[int, Event] = {}
 
     # ------------------------------------------------------------------ 1. tagging
     def tag(self):
@@ -135,9 +247,13 @@ class Analyzer:
             else:
                 exact[(prov.lower(), int(eid))] = (label, state)
         hints = [h.lower() for h in self.cfg["storage_provider_hints"]]
+        sw = {(prov.lower(), int(eid)): (label, group, kind)
+              for prov, eid, label, group, kind in self.cfg.get("software_events", [])}
         for e in self.events:
             p = e.provider.lower()
             e.signal = sig.get((p, e.eid))
+            if (p, e.eid) in sw:
+                e.software = self._software_tag(e, *sw[(p, e.eid)])
             hit = exact.get((p, e.eid))
             if hit is None and p in wild:
                 hit = (f"{wild[p][0]} {e.eid}", wild[p][1])
@@ -152,6 +268,60 @@ class Analyzer:
                 e.storage = {"label": label, "state": state}
         self.storage = [e for e in self.events if e.storage]
         self.storage_times = [e.ts for e in self.storage]
+        self.software = [e for e in self.events if e.software]
+        self.software_times = [e.ts for e in self.software]
+
+    def _software_tag(self, e: Event, label: str, group: str, kind: str) -> dict:
+        """What an app / update / service event says, with the app, update or service it names."""
+        d = e.data or {}
+
+        def v(*keys):
+            return next((str(d[k]).strip() for k in keys if str(d.get(k) or "").strip()), "")
+
+        subject, detail = "", ""
+        if group == "app" and kind == "report":            # Windows Error Reporting 1001
+            name, p1 = v("EventName", "param3"), v("P1", "param6")
+            if name.lower() in WER_KINDS:
+                kind, label = WER_KINDS[name.lower()]
+            elif name:
+                label = f"Error report ({name[:40]})"
+            subject = (f"bug check {p1}" if kind == "bluescreen" else p1) if p1 else ""
+        elif group == "app" and e.provider.lower() == ".net runtime":
+            txt = v("param1")
+            m = re.search(r"Application:\s*(\S+)", txt)
+            subject = m.group(1) if m else txt.split("\n", 1)[0]
+            m = re.search(r"Exception Info:\s*([^\r\n]+)", txt)
+            detail = m.group(1) if m else ""
+        elif group == "app":                                # Application Error 1000 / Application Hang 1002
+            subject = v("AppName", "param1")
+            if kind == "crash":
+                module, code = v("ModuleName", "param4"), v("ExceptionCode", "param7")
+                detail = ", ".join(x for x in (f"module {module}" if module else "", f"exception {code}" if code else "") if x)
+        elif group == "update":
+            subject = v("updateTitle", "PackageIdentifier", "param1")
+            detail = f"error {v('errorCode')}" if kind == "fail" and v("errorCode") else ""
+        elif group == "install":
+            subject = v("param1")
+            m = re.match(r"Product:\s*(.+?)\s+--", subject)
+            subject = m.group(1) if m else subject
+        elif group == "service":
+            subject = v("param1")
+            if e.eid == 7031:
+                action = v("param5")
+                if v("param4") == "2" or re.search(r"restart the computer|reboot", action, re.I):
+                    kind, label = "reboot", "Service crashed - Windows restarts the PC"
+                detail = f"recovery action: {action}" if action else ""
+        elif kind == "driver":
+            subject = v("param1")
+        elif kind == "power":
+            ac = v("AcOnline").lower()
+            subject = "on battery" if ac in ("false", "0") else "on AC power" if ac in ("true", "1") else ""
+        if group == "app" and kind == "crash" and subject.lower() in self.critical:
+            kind, label = "critical", "System process crashed"
+        state = ("error" if kind in SW_ERROR or (group == "service" and kind == "reboot")
+                 else "warning" if kind in SW_WARN else "info")
+        return {"label": label, "group": group, "kind": kind, "state": state,
+                "subject": subject[:160], "detail": detail[:200]}
 
     # ------------------------------------------------------------------ 2. integrity
     def integrity(self):
@@ -255,6 +425,141 @@ class Analyzer:
                 "boot_type": BOOT_TYPE_NAMES.get(b["boot_type"]) if b else None,
                 "events": len(evs),
             })
+
+    # ------------------------------------------------------------------ which drive?
+    def _vendor(self, data: dict) -> Tuple[Optional[str], str]:
+        """Vendor named anywhere in the event -> (vendor, how: name / VEN_xxxx / model)."""
+        vals = [str(v) for v in (data or {}).values() if str(v).strip()]
+        if not vals:
+            return None, ""
+        blob = "\n".join(vals)
+        pci = {m.upper() for m in _PCI_VEN.findall(blob)}
+        models = [str(v) for k, v in data.items() if any(h in str(k).lower() for h in ("model", "product", "friendly"))]
+        for name, names, ids, mrx in self.vendors:
+            if any(rx.search(blob) for rx in names):
+                return name, "name"
+            if pci & ids:
+                return name, f"VEN_{sorted(pci & ids)[0]}"
+            if any(rx.search(m) for rx in mrx for m in models):
+                return name, "model"
+        return None, ""
+
+    def _identity(self, data: dict) -> Optional[dict]:
+        """The drive an event names itself (Storport / Partition fields, PCI vendor ID), or None."""
+        lk = {str(k).lower(): str(v).strip() for k, v in (data or {}).items() if str(v).strip()}
+
+        def pick(*keys):
+            return next((lk[k] for k in keys if k in lk), "")
+
+        model, maker = pick("model", "modelnumber", "productid", "product", "friendlyname"), pick("vendorid", "manufacturer", "vendor")
+        if maker.upper() in GENERIC_VENDOR_IDS:
+            maker = ""
+        if model and maker and maker.lower() not in model.lower():
+            model = f"{maker} {model}"
+        serial = pick("serialnumber", "serial")
+        vendor, how = self._vendor(data)
+        if not (model or maker or _serial(serial) or vendor):
+            return None
+        return {"vendor": vendor, "how": how, "model": model or maker, "serial": serial,
+                "fw": pick("revision", "productrevision", "firmwarerevision", "firmware"),
+                "disk": _int(pick("disknumber")), "bus": _int(pick("bustype"))}
+
+    def _add_drive(self, ident: dict, ts: float, inventory: bool) -> dict:
+        for d in self.drives:
+            if _same_drive(d, ident):
+                break
+        else:
+            d = {"vendor": None, "model": "", "serial": "", "fw": "", "bus": None, "disks": set(),
+                 "first_ts": ts, "from_inventory": False}
+            self.drives.append(d)
+        d["vendor"] = d["vendor"] or ident["vendor"]
+        if len(ident["model"]) > len(d["model"]):
+            d["model"] = ident["model"]
+        for k in ("serial", "fw", "bus"):
+            d[k] = d[k] or ident[k]
+        d["from_inventory"] |= inventory
+        if inventory and ident["disk"] is not None:
+            d["disks"].add(ident["disk"])
+        return d
+
+    def _disk_number(self, data: dict) -> Optional[int]:
+        for k, v in (data or {}).items():
+            if str(k).lower() == "disknumber" and _int(v) is not None:
+                return _int(v)
+        for v in (data or {}).values():
+            m = _HARDDISK.search(str(v))
+            if m:
+                return int(m.group(1))
+        return None
+
+    def _disk_at(self, n: int, ts: float, k: int) -> Optional[dict]:
+        """Drive that had disk number n at time ts: the inventory of that boot, else an unambiguous one."""
+        recs = [r for r in self.inv_recs if r["disk"] == n]
+        same = [r for r in recs if r["session"] == k]
+        if same:
+            before = [r for r in same if r["ts"] <= ts]
+            return (before[-1] if before else same[0])["drive"]
+        drives = {id(r["drive"]): r["drive"] for r in recs}
+        return next(iter(drives.values())) if len(drives) == 1 else None
+
+    def _drives_in(self, k: int) -> Tuple[List[dict], bool]:
+        """Drives present in boot session k (from its boot-time inventory), else every drive in the logs."""
+        recs = [r for r in self.inv_recs if r["session"] == k]
+        if k >= 0 and any(r["ts"] - self.boot_ts[k] <= self.s["boot_cluster_s"] for r in recs):
+            return list({id(r["drive"]): r["drive"] for r in recs}.values()), True
+        return self.drives, False
+
+    def identify(self):
+        """Tie every storage event to a drive and flag the highlighted vendor's drives.
+
+        named    - the event itself names the drive (Storport VendorId / ProductId / SerialNumber,
+                   Partition Model, PCI VEN_xxxx)                                         -> sure
+        disk     - it names \\Device\\HarddiskN, and the Partition inventory of that boot
+                   says which drive was disk N                                           -> sure
+        only     - it names no drive, but only one drive is in that boot (or in the logs)
+                   and the event does not point at another disk number                    -> probably
+        WHEA (platform) events are never guessed: their PCIe device may be anything.
+        """
+        self.drives, self.inv_recs = [], []
+        named = {}
+        for e in self.storage:
+            ident = self._identity(e.data)
+            if not ident:
+                continue
+            named[e.idx] = ident
+            if ident["model"] or _serial(ident["serial"]):
+                inv = e.storage["label"] == "Disk inventory"
+                ident["drive"] = self._add_drive(ident, e.ts, inv)
+                if inv:
+                    self.inv_recs.append({"ts": e.ts, "session": self._session_of(e.ts), "disk": ident["disk"],
+                                          "drive": ident["drive"]})
+        for e in self.storage:
+            ident, n, sure, basis, dev = named.get(e.idx), None, True, "", None
+            if ident:
+                dev = ident.get("drive") or ident
+                basis = f"PCI device {ident['how']} in the event" if ident["how"].startswith("VEN_") and "drive" not in ident \
+                    else "named in the event"
+            else:
+                k = self._session_of(e.ts)
+                n = self._disk_number(e.data)
+                if n is not None:
+                    dev = self._disk_at(n, e.ts, k)
+                    basis = f"Disk {n} in the Partition inventory"
+                if dev is None and not self._is_platform(e):
+                    cands, this_boot = self._drives_in(k)
+                    only = cands[0] if len(cands) == 1 else None
+                    if only and (n is None or (n in only["disks"] if only["disks"] else n == 0)):
+                        dev, sure = only, False
+                        basis = "only drive in this boot" if this_boot else "only drive in these logs"
+            if dev is None:
+                e.storage["device"] = {"hl": "", "name": f"Disk {n}" if n is not None else "", "vendor": None,
+                                       "sure": False, "basis": "not identified" + (
+                                           f" - Disk {n} is not in the Partition inventory" if n is not None else "")}
+                continue
+            vendor = dev.get("vendor")
+            hl = ("yes" if sure else "probably") if vendor and vendor == self.hl_vendor else "no"
+            e.storage["device"] = {"hl": hl, "name": dev.get("model") or vendor or "", "vendor": vendor,
+                                   "serial": dev.get("serial") or "", "sure": sure, "basis": basis}
 
     def _ev(self, e: Event, note: str = "") -> dict:
         return {"signal": e.signal, "label": self.labels.get(e.signal, f"{e.provider} {e.eid}"),
@@ -404,6 +709,8 @@ class Analyzer:
             for e in tail:
                 if e.signal in CLEAN_SIGNALS:
                     stop[e.signal] = e  # keep the latest
+            if "SHUTDOWN_REQUEST" in stop:
+                self._requests[k] = stop["SHUTDOWN_REQUEST"]
             bwin = [e for e in cur if e.ts <= bstart + s["boot_window_s"]]
             hard = {}
             for e in bwin:
@@ -566,7 +873,21 @@ class Analyzer:
                 return max((e.storage["state"] for e in xs), key=lambda x: STATE_RANK.get(x, 0))
             return "healthy" if covered else "no data"
 
+        by: Dict[tuple, dict] = {}
+        for e in bad:
+            dev = e.storage.get("device") or {}
+            key = (dev.get("name") or "", dev.get("vendor") or "", dev.get("hl") in ("yes", "probably"), bool(dev.get("hl")))
+            g = by.setdefault(key, {"name": key[0], "vendor": key[1], "highlight": key[2], "identified": key[3],
+                                    "counts": Counter(), "total": 0, "probable": 0, "bases": Counter()})
+            g["counts"][e.storage["label"]] += 1
+            g["total"] += 1
+            g["probable"] += 1 if dev.get("hl") and not dev.get("sure") else 0
+            g["bases"][dev.get("basis") or "not identified"] += 1
+        by_drive = [dict(g, counts=dict(g["counts"]), bases=dict(g["bases"]))
+                    for g in sorted(by.values(), key=lambda g: (not g["highlight"], not g["identified"], -g["total"]))]
+
         return {"state": worst(bad), "drive_state": worst([e for e in bad if not self._is_platform(e)]),
+                "by_drive": by_drive,
                 "from": iso(datetime.fromtimestamp(t0, timezone.utc)),
                 "to": iso(datetime.fromtimestamp(t1, timezone.utc)),
                 "anchor": iso(datetime.fromtimestamp(anchor, timezone.utc)),
@@ -579,7 +900,13 @@ class Analyzer:
                 "events": [{"idx": e.idx, "time": iso(e.time), "offset_s": round(e.ts - anchor, 1),
                             "provider": e.provider, "eid": e.eid, "channel": e.channel,
                             "label": e.storage["label"], "state": e.storage["state"], "level": e.level,
-                            "fields": _fields(e.data)} for e in evs[:300]]}
+                            "fields": _fields(e.data), **self._dev_fields(e)} for e in evs[:300]]}
+
+    @staticmethod
+    def _dev_fields(e: Event) -> dict:
+        dev = e.storage.get("device") or {}
+        return {"dev": dev.get("name") or "", "vendor": dev.get("vendor") or "", "hl": dev.get("hl") or "",
+                "dev_basis": dev.get("basis") or ""}
 
     def correlate(self):
         w = self.s["drive_window_s"]
@@ -612,6 +939,37 @@ class Analyzer:
             self._assess(t, sleep=False)
         for sl in self.sleeps:
             self._assess(sl, sleep=True)
+        for t in self.transitions:  # after the drive verdicts: software reasons refer to them
+            self._assess_software(t, sleep=False)
+        for sl in self.sleeps:
+            self._assess_software(sl, sleep=True)
+
+    @staticmethod
+    def _highlight(*wins) -> str:
+        """Which drive the warning / error events in these windows were on."""
+        gs = [g for w in wins if w for g in w.get("by_drive", [])]
+        if any(g["highlight"] and g["probable"] < g["total"] for g in gs):
+            return "yes"
+        if any(g["highlight"] for g in gs):
+            return "probably"
+        if any(not g["identified"] for g in gs):
+            return "unknown"
+        return "no" if gs else "none"
+
+    def _drive_lines(self, w: dict, when: str) -> List[str]:
+        out = []
+        for g in w.get("by_drive", []):
+            name, what = f" ({g['name']})" if g["name"] else "", _counts_text(g["counts"])
+            if g["highlight"]:
+                only = next((b for b in g["bases"] if b.startswith("only")), "only drive")
+                prob = f" - {g['probable']} of these name no drive and are counted here as the {only}" if g["probable"] else ""
+                out.append(f"{self.hl_vendor} drive{name} {when}: {what}{prob}")
+            elif g["identified"]:
+                out.append(f"Other drive{name or (' (' + g['vendor'] + ')' if g['vendor'] else '')} {when}: {what}")
+            else:
+                hint = "" if self.inv_recs else " (add the Partition/Diagnostic log to identify drives by disk number)"
+                out.append(f"Not tied to a specific drive {when}: {what}{hint}")
+        return out
 
     def _assess(self, it: dict, sleep: bool):
         d, w = it["drive"], round(self.s["drive_window_s"])
@@ -691,8 +1049,237 @@ class Analyzer:
         else:
             effect = {"missing": "missing", "reset": "errors", "error": "errors", "slow": "warnings",
                       "warning": "warnings"}.get(post["drive_state"], "none" if post["state"] == "healthy" else "warnings")
+        hl, v = self._highlight(pre, post), self.hl_vendor
+        lines = [x for win, when in ((pre, f"before {off}"), (post, f"after {on}")) if win for x in self._drive_lines(win, when)]
+        if cause in ("likely", "possible") and hl in ("yes", "probably", "no"):
+            notes.append({"yes": f"These drive problems are on the {v} drive",
+                          "probably": f"These drive problems are probably on the {v} drive: it is the only drive seen, "
+                                      f"but the events do not name it",
+                          "no": f"These drive problems are on another drive, not the {v} drive"}[hl])
         d.update(cause=cause, cause_label=cause_label, effect=effect,
-                 effect_label=EFFECT_LABELS[effect].format(on=on), reasons=before + after + notes)
+                 effect_label=EFFECT_LABELS[effect].format(on=on), highlight=hl,
+                 highlight_label=HL_LABELS[hl].format(v=v), reasons=before + after + lines + notes)
+
+    # ------------------------------------------------------------------ 8b. what triggered it (software)?
+    def _software_between(self, t0: float, t1: float) -> List[Event]:
+        i = bisect.bisect_left(self.software_times, t0)
+        j = bisect.bisect_right(self.software_times, t1)
+        return self.software[i:j]
+
+    @staticmethod
+    def _sw_ev(e: Event, anchor: Optional[float] = None) -> dict:
+        out = {"idx": e.idx, "time": iso(e.time), "provider": e.provider, "eid": e.eid, "channel": e.channel, **e.software}
+        if anchor is not None:
+            out["offset_s"] = round(e.ts - anchor, 1)
+        return out
+
+    def _sw_window(self, t0: float, t1: float, anchor: float) -> Tuple[List[Event], dict]:
+        """Every app / update / service event in [t0, t1]; the most recent 300 are listed."""
+        evs = self._software_between(t0, t1)
+        return evs, {"from": _dt(t0), "to": _dt(t1), "anchor": _dt(anchor),
+                     "app_covered": self._covered("application", t0, t1), "total": len(evs),
+                     "counts": dict(Counter(e.software["label"] for e in evs if e.software["state"] != "info")),
+                     "events": [self._sw_ev(e, anchor) for e in evs[-300:]]}
+
+    def _initiator(self, e: Event) -> dict:
+        """Who asked for a shutdown / restart (User32 1074): process + reason code -> category."""
+        d = e.data or {}
+        path = re.sub(r"\s*\([^()]*\)\s*$", "", (d.get("param1") or "").strip())  # drop " (COMPUTERNAME)"
+        low = path.lower()
+        pc = next((cat for pat, cat in self.cfg.get("shutdown_initiators", []) if pat.lower() in low), "app" if path else None)
+        code = _int(d.get("param4"))
+        rc, rtext, planned = _reason(code)
+        comment = (d.get("param6") or "").strip()
+        if rc == "update":                    # e.g. "Update and restart" from the Start menu: the reason says update
+            cat = "update"
+        elif pc in ("update", "vendor", "management", "installer", "service", "script"):
+            cat = pc
+        elif pc == "system" and (rc == "unstable" or re.search(r"terminat|unexpected", comment, re.I)):
+            cat = "critical"
+        elif rc in ("installer", "hardware", "power", "unstable"):
+            cat = rc
+        else:
+            cat = pc or "app"
+        agrees = ((rc is not None and rc == pc) or cat == "critical" or (pc == "user" and rc is None)
+                  or (pc in ("vendor", "management") and rc in ("installer", "update")))
+        # Windows' own reason text is localised; the decoded code is added when it says more than that text
+        reason = (d.get("param3") or "").strip()
+        words = set(re.findall(r"[a-z]+", rtext.lower())) - {"planned", "unplanned"}
+        same = bool(words) and words <= set(re.findall(r"[a-z]+", reason.lower()))
+        code_txt = (f"0x{code:X}" + ("" if same else f" = {rtext}")) if code is not None else ""
+        return {"process": re.split(r"[\\/]", path)[-1] if path else "", "path": path, "category": cat,
+                "label": TRIGGER_LABELS.get(cat, cat), "reason": reason,
+                "reason_text": reason + (f" [{code_txt}]" if reason and code_txt else code_txt),
+                "reason_code": f"0x{code:X}" if code is not None else "", "reason_decoded": rtext, "planned": planned,
+                "type": (d.get("param5") or "").strip(), "user": (d.get("param7") or "").strip(),
+                "comment": comment[:300], "time": iso(e.time), "idx": e.idx, "agrees": bool(agrees)}
+
+    def _running(self, t0: float, t1: float) -> Optional[Event]:
+        """An update / install that started in [t0, t1] and had not finished by t1."""
+        open_: Dict[tuple, Event] = {}
+        for e in self._software_between(t0, t1):
+            g, kind, subj = e.software["group"], e.software["kind"], e.software["subject"]
+            kb = re.search(r"KB\d{6,8}", subj, re.I)
+            key = (g, (kb.group(0) if kb else subj).upper()) if g == "update" else (g, "")
+            if kind == "start" and g in ("update", "install"):
+                open_[key] = e
+            elif g == "update" and kind in ("done", "fail", "restart", "reboot"):
+                for x in [x for x in open_ if x[0] == "update" and (x == key or not key[1] or not x[1])]:
+                    del open_[x]
+            elif g == "install" and kind in ("end", "done", "fail", "reboot"):
+                open_.pop(key, None)
+        return max(open_.values(), key=lambda x: x.ts) if open_ else None
+
+    def _assess_software(self, it: dict, sleep: bool):
+        """What triggered it on the software side, from the 1074 request and the app / update / service events."""
+        s, W = self.s, self.cfg["weights"]["software"]
+        win, after_s = s["software_window_s"], s["software_after_s"]
+        t_off = it["start_ts"] if sleep else it["last_alive_ts"]
+        t_on = it["end_ts"] if sleep else it["boot_ts"]
+        pre_ev, pre = self._sw_window(t_off - win, t_off + 5, t_off) if t_off else ([], None)
+        post_ev, post = self._sw_window(t_on, t_on + after_s, t_on) if t_on else ([], None)
+        off, on = ("sleep", "wake") if sleep else ("power-off", "boot")
+        span = _span(win)
+        sw = {"before": pre, "after": post, "window_s": win, "initiator": None, "pending": None, "running": None}
+        it["software"] = sw
+        tail = []
+        if pre is not None:
+            tail.append(f"{span} before {off}: {_counts_text(pre['counts'])}" if pre["counts"] else
+                        f"No app crash or hang, failed update or service failure in the {span} before {off}"
+                        + ("" if pre["app_covered"] else " (no Application log for this time - only System-log events checked)"))
+        if post is not None and post["counts"]:
+            tail.append(f"{_span(after_s)} after {on}: {_counts_text(post['counts'])}")
+        if sleep:
+            sw.update(trigger="n/a", label="n/a", strength="n/a", strength_label="n/a", confidence=None, reasons=tail)
+            return
+
+        typ, k, bc = it["type"], it["boot_index"], it.get("bugcheck")
+        req = self._requests.get(k)
+        init = self._initiator(req) if req else None
+        sess0 = self.boots[k - 1]["start_ts"] if k >= 1 else (self.events[0].ts if self.events else 0)
+        pending = running = None
+        if t_off:
+            marks = [e for e in self._software_between(sess0, t_off + 5)
+                     if e.software["group"] in ("update", "install") and e.software["kind"] in ("restart", "reboot")]
+            pending = marks[-1] if marks else None
+            running = self._running(max(sess0, t_off - s["running_lookback_s"]), t_off + 5)
+
+        def has(group, *kinds):
+            return [e for e in pre_ev if e.software["group"] == group and (not kinds or e.software["kind"] in kinds)]
+
+        def what(e):
+            return e.software["label"] + (f": {e.software['subject']}" if e.software["subject"] else "")
+
+        def ago(e):
+            return f"{_fmt_dur(t_off - e.ts)} before {off}" if e.ts < t_off - 0.5 else "the last thing logged"
+
+        def names(evs):
+            return ", ".join(sorted({e.software["subject"] or e.software["label"] for e in evs}))[:200]
+
+        reasons, trigger, strength, conf = [], "unknown", "unknown", 0.0
+        if init:
+            trigger, strength = init["category"], "confirmed"
+            conf = W["initiator"] + (W["reason_agrees"] if init["agrees"] else 0)
+            reasons.append(f"{(init['type'] or 'shutdown').capitalize()} requested by {init['process'] or 'an unnamed process'}"
+                           + (f" for {init['user']}" if init["user"] else "") + f" ({init['label']})")
+            if init["reason_text"]:
+                reasons.append(f"Reason given: {init['reason_text']}")
+            if init["comment"]:
+                reasons.append(f"Comment: {init['comment']}")
+            support = {"update": has("update") + ([pending] if pending and pending.software["group"] == "update" else []),
+                       "installer": has("install") + ([pending] if pending and pending.software["group"] == "install" else []),
+                       "service": has("service", "reboot", "crash"), "critical": has("app", "critical")}.get(trigger, [])
+            support = sorted({e.idx: e for e in support}.values(), key=lambda e: e.idx)
+            if support:
+                conf += W["supporting_events"]
+                reasons.append(f"Backed up by: {_counts_text(Counter(e.software['label'] for e in support))} "
+                               f"(latest: {what(support[-1])}, {ago(support[-1])})")
+            if typ == "hard":
+                reasons.append("The shutdown was requested but never finished - the PC hung or lost power on the way down")
+                held = has("service", "hang")
+                if held:
+                    reasons.append(f"Held up by: {names(held)}")
+        elif typ in ("shutdown", "restart"):
+            svc, inst, upd = has("service", "reboot"), has("install", "reboot"), has("update", "reboot")
+            if svc or inst or upd:
+                e = (svc or inst or upd)[-1]
+                trigger = "service" if svc else "installer" if inst else "update"
+                strength, conf = "likely", W["restart_logged"]
+                reasons.append(f"{what(e)} ({ago(e)})")
+                reasons.append("No User32 1074 was logged, so the request itself is not on record")
+            elif pending and typ == "restart":
+                trigger = "update" if pending.software["group"] == "update" else "installer"
+                strength, conf = "possible", W["restart_pending"]
+                reasons.append(f"{what(pending)} ({ago(pending)}) - this restart would complete it, "
+                               f"but no User32 1074 says who asked for the restart")
+            else:
+                trigger = "not_logged"
+                reasons.append("Who asked for this shutdown was not logged (no User32 1074) - for example a short "
+                               "power-button press, a lid or battery action, or Windows itself")
+        elif pre is None:
+            reasons.append("The log has nothing before this boot, so what led up to it can't be checked")
+        else:
+            covered = pre["app_covered"] or self._covered("system", t_off - win, t_off)
+            crit, svc, drv = has("app", "critical"), has("service", "reboot"), has("system", "driver")
+            hangs = has("app", "hang") + has("service", "hang")
+            crashes = has("app", "crash") + has("service", "crash")
+            if crit:
+                hit = bc is not None and any(_int(x) == bc for x in self.cfg.get("critical_bugchecks", []))
+                trigger, strength = "critical", "likely" if hit else "possible"
+                conf = W["critical_crash"] + (W["critical_bugcheck"] if hit else 0)
+                reasons.append(f"{what(crit[-1])} ({ago(crit[-1])}) - Windows cannot keep running without it")
+                if hit:
+                    reasons.append(f"Crash code 0x{bc:X} is the one Windows raises when a system process dies")
+            elif svc:
+                trigger, strength, conf = "service", "likely", W["restart_logged"]
+                reasons.append(f"{what(svc[-1])} ({ago(svc[-1])}) - the restart it started did not complete")
+            elif running:
+                trigger = "update_running" if running.software["group"] == "update" else "install_running"
+                strength, conf = "possible", W["work_in_progress"]
+                reasons.append(f"{what(running)} ({ago(running)}) and had not finished when the PC went down")
+            elif hangs:
+                trigger, strength, conf = "hang", "possible", W["hang"]
+                reasons.append(f"Stopped responding right before {off}: {names(hangs)} "
+                               f"- a PC that stops responding is often forced off with the power button")
+            elif drv:
+                trigger, strength, conf = "driver", "possible", W["driver"]
+                reasons.append(f"{what(drv[-1])} ({ago(drv[-1])})")
+            elif crashes:
+                trigger, strength, conf = "crash", "possible", W["crash"]
+                reasons.append(f"Crashed right before {off}: {names(crashes)} - an ordinary app crash does not take "
+                               f"Windows down by itself; it shows what was failing at the time")
+            elif covered and typ != "unknown":
+                trigger, strength = "none", "none"
+            elif covered:
+                tail = [f"How this session ended is undetermined ({it['subtype'].lower()}), "
+                        f"so a quiet log here proves nothing"] + tail
+            else:
+                tail = [f"No Application or System log covers the {span} before {off}"]
+            if typ == "unknown" and strength == "likely":
+                strength = "possible"
+            pw = [e for e in self._software_between(sess0, t_off + 5) if e.software["kind"] == "power" and e.software["subject"]]
+            if pw and pw[-1].software["subject"] == "on battery":
+                reasons.append(f"Running on battery (switched {ago(pw[-1])}, Kernel-Power 105) - "
+                               f"a drained battery cuts power without warning")
+        if pending and trigger not in ("update", "installer"):
+            reasons.append(f"Waiting for a restart: {what(pending)} ({ago(pending)})")
+        if trigger == "update":
+            done = [e for e in post_ev if e.software["group"] == "update" and e.software["kind"] == "done"]
+            if done:
+                reasons.append(f"Finished after the {on}: {what(done[-1])}")
+        # only real drive events count here, not a crash code that both verdicts already read
+        drive = it.get("drive", {})
+        if strength in SW_FOUND and trigger in ("critical", "hang", "crash", "driver", "update_running", "install_running") \
+                and drive.get("cause") in ("likely", "possible") \
+                and (drive.get("before") or {}).get("drive_state") not in (None, "healthy", "no data"):
+            conf -= W["drive_conflict"]
+            reasons.append(f"The drive also had problems right before this (drive caused it? \"{drive.get('cause_label')}\"). "
+                           f"A drive that stalls makes apps and services hang or crash, so these may be a symptom of the "
+                           f"drive rather than the cause")
+        sw.update(trigger=trigger, label=TRIGGER_LABELS.get(trigger, trigger), strength=strength,
+                  strength_label=STRENGTH_LABELS[strength], confidence=_clamp(conf) if strength in SW_FOUND else None,
+                  initiator=init, pending=self._sw_ev(pending) if pending else None,
+                  running=self._sw_ev(running) if running else None, reasons=reasons + tail)
 
     # ------------------------------------------------------------------ extra data-quality checks
     def quality(self):
@@ -727,7 +1314,7 @@ class Analyzer:
     # ------------------------------------------------------------------ disk inventory
     def inventory(self):
         seen, out = set(), []
-        keys = ("model", "serial", "revision", "firmware", "manufacturer", "bustype", "capacity", "location")
+        keys = ("model", "serial", "revision", "firmware", "manufacturer", "bustype", "capacity", "location", "disknumber")
         for e in self.storage:
             if e.storage["label"] != "Disk inventory":
                 continue
@@ -735,7 +1322,18 @@ class Analyzer:
             sig = (d.get("Model"), d.get("SerialNumber"))
             if d and sig not in seen:
                 seen.add(sig)
-                d["first_seen"] = iso(e.time)
+                vendor = (e.storage.get("device") or {}).get("vendor")
+                if vendor:
+                    d["Vendor"] = vendor
+                d.update(first_seen=iso(e.time), source="Partition inventory",
+                         highlight=bool(vendor and vendor == self.hl_vendor))
+                out.append(d)
+        for drv in self.drives:  # drives that only storage events name (no Partition log for them)
+            if not drv["from_inventory"]:
+                d = {"Model": drv["model"], "SerialNumber": drv["serial"], "Revision": drv["fw"], "Vendor": drv["vendor"]}
+                d = {k: v for k, v in d.items() if v}
+                d.update(first_seen=_dt(drv["first_ts"]), source="named in storage events",
+                         highlight=bool(drv["vendor"] and drv["vendor"] == self.hl_vendor))
                 out.append(d)
         self.disks = out
 
@@ -745,6 +1343,7 @@ class Analyzer:
         self.integrity()
         self.find_boots()
         self.build_sessions()
+        self.identify()
         self.find_sleeps()
         self.classify()
         self.correlate()
@@ -771,6 +1370,9 @@ class Analyzer:
         flags_total = sum(len(x["flags"]) for x in items)
         causes = Counter(t["drive"]["cause"] for t in self.transitions)
         effects = Counter(x["drive"]["effect"] for x in items)
+        hl_set = ("yes", "probably")
+        triggers = Counter(t["software"]["trigger"] for t in self.transitions)
+        bad_storage = [e for e in self.storage if e.storage["state"] != "info"]
         return {
             "wela_version": __version__,
             "generated": iso(datetime.now(timezone.utc)),
@@ -792,14 +1394,28 @@ class Analyzer:
                 "drive_likely": causes.get("likely", 0), "drive_possible": causes.get("possible", 0),
                 "drive_no_evidence": causes.get("no_evidence", 0), "drive_unknown": causes.get("unknown", 0),
                 "drive_effect": effects.get("errors", 0) + effects.get("missing", 0),
+                "hl_events": sum(1 for e in bad_storage if e.storage["device"]["hl"] in hl_set),
+                "hl_cycles": sum(1 for x in items if x["drive"]["highlight"] in hl_set),
+                "hl_suspect": sum(1 for t in self.transitions
+                                  if t["drive"]["cause"] in ("likely", "possible") and t["drive"]["highlight"] in hl_set),
+                "software": sum(1 for t in self.transitions if t["software"]["strength"] in SW_FOUND
+                                and t["software"]["trigger"] != "user"),
+                "software_events": sum(1 for e in self.software if e.software["state"] != "info"),
             },
             "hard_breakdown": dict(hard_breakdown),
             "storage_counts": dict(storage_counts),
+            "software_breakdown": dict(triggers),
+            "software_counts": dict(Counter(e.software["label"] for e in self.software if e.software["state"] != "info")),
+            "trigger_labels": TRIGGER_LABELS,
+            "highlight_vendor": self.hl_vendor,
             "items": items,
             "sessions": self.sessions,
             "storage_events": [{"idx": e.idx, "time": iso(e.time), "provider": e.provider, "eid": e.eid,
                                 "channel": e.channel, "label": e.storage["label"], "state": e.storage["state"],
-                                "level": e.level} for e in self.storage if e.storage["state"] != "info"][:5000],
+                                "level": e.level, **self._dev_fields(e)} for e in bad_storage][:5000],
+            # problems first if the cap is hit, then back in time order
+            "software_events": [self._sw_ev(e) for e in sorted(
+                sorted(self.software, key=lambda e: e.software["state"] == "info")[:5000], key=lambda e: e.idx)],
             "disks": self.disks,
             "integrity": self.integrity_out,
             "settings": self.s,
