@@ -123,6 +123,8 @@ wela/
   demo.py              synthetic demo logs with expected verdicts
 web/                   UI (vanilla HTML/CSS/JS, works offline)
 tests/                 unittest suite (demo scenario, rule tests, random-input robustness test)
+docs/                  team walkthrough (.pptx / .pdf) and WELA-technical-reference.pdf (how every
+                       verdict is made, demo script, limitations, roadmap, AI integration)
 ```
 
 ## Before relying on it
