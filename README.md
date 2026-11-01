@@ -138,7 +138,8 @@ wela/
 web/                   UI (vanilla HTML/CSS/JS, works offline)
 tests/                 unittest suite (demo scenario, rule tests, random-input robustness test)
 docs/                  team walkthrough (.pptx / .pdf) and WELA-technical-reference.pdf (how every
-                       verdict is made, demo script, limitations, roadmap, AI integration)
+                       verdict is made, demo script, limitations, roadmap, AI integration);
+                       src/ holds its HTML source and screenshots (print command at the top)
 ```
 
 ## Before relying on it
