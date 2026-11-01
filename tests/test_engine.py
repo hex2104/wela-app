@@ -71,8 +71,7 @@ class DemoScenario(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.mkdtemp()
-        demo.build(cls.tmp)
-        events, cls.sources = parser.load([cls.tmp])
+        events, cls.sources, _ = parser.load(demo.build(cls.tmp))   # one by one, as the UI does: Partition too
         cls.r = engine.analyze(events, catalog.load_config(), cls.sources)
 
     def test_files_parsed(self):
@@ -147,8 +146,21 @@ class DemoScenario(unittest.TestCase):
         self.assertEqual(sw["T3"]["confidence"], 1.0)
         self.assertTrue(any("symptom of the drive" in x for x in sw["T8"]["reasons"]))
         self.assertTrue(any("lsass.exe" in x for x in sw["T16"]["reasons"]))
-        self.assertEqual(sw["T7"]["after"]["counts"], {"Crash report: blue screen": 1})
+        self.assertIn("10 min after boot: Crash report: blue screen x1", sw["T7"]["reasons"])
         self.assertEqual(sw["S1"]["trigger"], "n/a")
+
+    def test_app_lists_run_from_one_power_cycle_to_the_next(self):
+        sw = {x["id"]: x["software"] for x in self.r["items"]}
+        after7, before8 = sw["T7"]["after"], sw["T8"]["before"]
+        self.assertEqual((after7["until"], before8["since"]), ("T8", "T7"))
+        # one stretch, listed with both: the blue-screen report right after T7's boot, the hangs right before T8
+        self.assertEqual([e["eid"] for e in after7["events"]], [1001, 1002, 1002])
+        self.assertEqual([e["idx"] for e in after7["events"]], [e["idx"] for e in before8["events"]])
+        # the verdict still reads the minutes before power-off, and says what came earlier
+        self.assertEqual(sw["T8"]["trigger"], "hang")
+        self.assertIn("Earlier, since T7 boot: Crash report: blue screen x1", sw["T8"]["reasons"])
+        self.assertEqual((sw["T1"]["before"], sw["T16"]["after"]["until"]), (None, None))   # the ends of the log
+        self.assertEqual(sw["T9"]["before"]["since"], "S3")   # S4 never resumed: T9's list starts at the wake before it
 
     def test_exports(self):
         html = report.to_html(self.r, 330)
@@ -432,6 +444,19 @@ class SoftwareTrigger(unittest.TestCase):
         self.assertTrue(any("never finished" in x for x in t["software"]["reasons"]))
         self.assertIn("Held up by: Demo Service", t["software"]["reasons"])
 
+    def test_app_lists_keep_the_nearest_events(self):
+        cfg = catalog.load_config()
+        cfg["settings"]["software_list_max"] = 2
+        crash = lambda t: app(f"2026-01-01T{t}:00Z", "Application Error", 1000, AppName="demo.exe")   # noqa: E731
+        r = engine.analyze(hard_cycle([crash(t) for t in ("08:30", "09:00", "09:30", "09:50")],
+                                      [crash(t) for t in ("10:06", "10:07", "10:08")]), cfg)
+        sw = transitions(r)[1]["software"]
+        pre, post = sw["before"], sw["after"]
+        self.assertEqual((pre["since"], pre["total"], [e["time"][11:16] for e in pre["events"]]), ("T1", 4, ["09:30", "09:50"]))
+        self.assertEqual((post["until"], post["total"], [e["time"][11:16] for e in post["events"]]), (None, 3, ["10:06", "10:07"]))
+        self.assertEqual((sw["trigger"], sw["strength"]), ("crash", "possible"))   # only 09:50 is within the 15 min
+        self.assertIn("Earlier, since T1 boot: Application crashed x3", sw["reasons"])
+
     def test_quiet_app_log_and_battery_context(self):
         s = self.sw(hard_cycle([ev("2026-01-01T09:00:00Z", KP, 105, AcOnline="false"), app("2026-01-01T09:30:00Z", "Demo", 1, level=4)]))
         self.assertEqual((s["trigger"], s["strength"]), ("none", "none"))
@@ -451,6 +476,33 @@ class SoftwareTrigger(unittest.TestCase):
                                ("crash", "tool.exe", "System.IO.IOException"),
                                ("bluescreen", "bug check 7a", ""),
                                ("crash", "Demo", "recovery action: Restart the service")])
+
+
+class Folders(unittest.TestCase):
+    """From a folder only System, Application and Storport (Operational, Health) are read."""
+
+    def test_only_the_four_logs_are_read_from_a_folder(self):
+        read = ["System.evtx", "Application.evtx", "Microsoft-Windows-Storage-Storport%4Operational.evtx",
+                "Microsoft-Windows-Storage-Storport%4Health.evtx", "Storport.evtx", "PC01_System (1).evtx"]
+        skip = ["Security.evtx", "Setup.evtx", "Microsoft-Windows-Partition%4Diagnostic.evtx", "Intel-GFX-Info%4System.evtx",
+                "Microsoft-Windows-Application-Experience%4Program-Telemetry.evtx",
+                "Microsoft-Windows-Storage-Storport%4Admin.evtx", "Microsoft-Windows-Ntfs%4Operational.evtx"]
+        tmp = tempfile.mkdtemp()
+        os.makedirs(os.path.join(tmp, "sub"))
+        for n in read + skip + ["notes.txt"]:
+            open(os.path.join(tmp, "sub" if n == "Storport.evtx" else "", n), "w").close()
+        files, skipped = parser.expand_paths([tmp])
+        self.assertEqual(sorted(map(os.path.basename, files)), sorted(read))
+        self.assertEqual(sorted(map(os.path.basename, skipped)), sorted(skip))
+        one = os.path.join(tmp, "Setup.evtx")   # a log given by itself is always read
+        self.assertEqual(parser.expand_paths([one]), ([one], []))
+
+    def test_demo_folder(self):
+        tmp = tempfile.mkdtemp()
+        demo.build(tmp)
+        _, sources, skipped = parser.load([tmp])
+        self.assertEqual(sorted(s["file"] for s in sources), ["Application.xml", "Storport-Operational.xml", "System.xml"])
+        self.assertEqual([os.path.basename(x) for x in skipped], ["Partition-Diagnostic.xml"])
 
 
 class Robustness(unittest.TestCase):

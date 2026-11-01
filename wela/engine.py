@@ -19,7 +19,8 @@ Pipeline
   8. assess   - did the drive cause the transition, what was the effect on it,
                 which drive had the problems, and what triggered it on the
                 software side (1074 initiator, updates, installers, app crashes
-                and hangs, service failures)
+                and hangs, service failures). The app / update lists run from
+                the power cycle before to the one after.
 """
 from __future__ import annotations
 
@@ -160,6 +161,11 @@ def _span(sec: float) -> str:
 
 def _counts_text(counts: dict) -> str:
     return ", ".join(f"{label} x{n}" for label, n in sorted(counts.items(), key=lambda kv: -kv[1]))
+
+
+def _problems(evs) -> dict:
+    """App / update / service events that are more than informational, counted by what they say."""
+    return dict(Counter(e.software["label"] for e in evs if e.software["state"] != "info"))
 
 
 def _dt(ts: float) -> Optional[str]:
@@ -939,10 +945,11 @@ class Analyzer:
             self._assess(t, sleep=False)
         for sl in self.sleeps:
             self._assess(sl, sleep=True)
+        spans = self._spans()
         for t in self.transitions:  # after the drive verdicts: software reasons refer to them
-            self._assess_software(t, sleep=False)
+            self._assess_software(t, sleep=False, bounds=spans[t["id"]])
         for sl in self.sleeps:
-            self._assess_software(sl, sleep=True)
+            self._assess_software(sl, sleep=True, bounds=spans[sl["id"]])
 
     @staticmethod
     def _highlight(*wins) -> str:
@@ -1073,13 +1080,41 @@ class Analyzer:
             out["offset_s"] = round(e.ts - anchor, 1)
         return out
 
-    def _sw_window(self, t0: float, t1: float, anchor: float) -> Tuple[List[Event], dict]:
-        """Every app / update / service event in [t0, t1]; the most recent 300 are listed."""
+    def _spans(self) -> Dict[str, tuple]:
+        """Where the app / update lists of every power cycle and sleep start and end:
+        id -> ((time, id) of the boot / wake that ended the one before it,
+               (time, id) of the power-off / sleep that started the one after it).
+        The ends of the log stand in, with id None. One's "after" list is the next one's "before" list.
+        A sleep never resumed ends no stretch; one whose start was not logged ends the stretch before it at its wake."""
+        marks = []
+        for x in self.transitions + self.sleeps:
+            off, on = (x["start_ts"], x["end_ts"]) if x["type"] == "sleep" else (x["last_alive_ts"], x["boot_ts"])
+            marks.append((x["id"], off if off is not None else on, on))
+        ons = sorted((on, i) for i, _, on in marks if on is not None)
+        offs = sorted((off, i) for i, off, _ in marks if off is not None)
+        on_ts, off_ts = [t for t, _ in ons], [t for t, _ in offs]
+        first, last = (self.events[0].ts, self.events[-1].ts) if self.events else (0.0, 0.0)
+        out = {}
+        for i, off, on in marks:
+            j = bisect.bisect_right(on_ts, off) - 1 if off is not None else -1
+            while j >= 0 and ons[j][1] == i:
+                j -= 1
+            k = bisect.bisect_left(off_ts, on) if on is not None else len(offs)
+            while k < len(offs) and offs[k][1] == i:
+                k += 1
+            out[i] = (ons[j] if j >= 0 else (first, None), offs[k] if k < len(offs) else (last, None))
+        return out
+
+    def _sw_window(self, t0: float, t1: float, anchor: float, **edge) -> Tuple[List[Event], dict]:
+        """Every app / update / service event in [t0, t1]. The software_list_max nearest the power cycle are listed
+        (the last ones before it, the first ones after it); the UI loads the rest on request.
+        edge: since=<id> for a "before" list (the power cycle it starts at), until=<id> for an "after" list."""
         evs = self._software_between(t0, t1)
-        return evs, {"from": _dt(t0), "to": _dt(t1), "anchor": _dt(anchor),
+        n = max(0, int(self.s["software_list_max"]))
+        shown = evs[max(0, len(evs) - n):] if "since" in edge else evs[:n]
+        return evs, {"from": _dt(t0), "to": _dt(t1), "anchor": _dt(anchor), **edge,
                      "app_covered": self._covered("application", t0, t1), "total": len(evs),
-                     "counts": dict(Counter(e.software["label"] for e in evs if e.software["state"] != "info")),
-                     "events": [self._sw_ev(e, anchor) for e in evs[-300:]]}
+                     "counts": _problems(evs), "events": [self._sw_ev(e, anchor) for e in shown]}
 
     def _initiator(self, e: Event) -> dict:
         """Who asked for a shutdown / restart (User32 1074): process + reason code -> category."""
@@ -1130,25 +1165,37 @@ class Analyzer:
                 open_.pop(key, None)
         return max(open_.values(), key=lambda x: x.ts) if open_ else None
 
-    def _assess_software(self, it: dict, sleep: bool):
-        """What triggered it on the software side, from the 1074 request and the app / update / service events."""
+    def _assess_software(self, it: dict, sleep: bool, bounds: tuple):
+        """What triggered it on the software side, from the 1074 request and the app / update / service events.
+
+        The verdict reads the software_window_s before power-off / sleep and the software_after_s after boot / wake;
+        the lists shown with it run back to the power cycle before and on to the one after (see _spans)."""
         s, W = self.s, self.cfg["weights"]["software"]
         win, after_s = s["software_window_s"], s["software_after_s"]
         t_off = it["start_ts"] if sleep else it["last_alive_ts"]
         t_on = it["end_ts"] if sleep else it["boot_ts"]
-        pre_ev, pre = self._sw_window(t_off - win, t_off + 5, t_off) if t_off else ([], None)
-        post_ev, post = self._sw_window(t_on, t_on + after_s, t_on) if t_on else ([], None)
+        (t_since, since), (t_until, until) = bounds
+        pre_all, pre = self._sw_window(min(t_since, t_off), t_off + 5, t_off, since=since) if t_off else ([], None)
+        post = self._sw_window(t_on, max(t_until, t_on), t_on, until=until)[1] if t_on else None
+        pre_ev = self._software_between(t_off - win, t_off + 5) if t_off else []
+        post_ev = self._software_between(t_on, t_on + after_s) if t_on else []
+        app_covered = bool(t_off) and self._covered("application", t_off - win, t_off)
         off, on = ("sleep", "wake") if sleep else ("power-off", "boot")
         span = _span(win)
         sw = {"before": pre, "after": post, "window_s": win, "initiator": None, "pending": None, "running": None}
         it["software"] = sw
         tail = []
         if pre is not None:
-            tail.append(f"{span} before {off}: {_counts_text(pre['counts'])}" if pre["counts"] else
+            counts, earlier = _problems(pre_ev), _problems(e for e in pre_all if e.ts < t_off - win)
+            tail.append(f"{span} before {off}: {_counts_text(counts)}" if counts else
                         f"No app crash or hang, failed update or service failure in the {span} before {off}"
-                        + ("" if pre["app_covered"] else " (no Application log for this time - only System-log events checked)"))
-        if post is not None and post["counts"]:
-            tail.append(f"{_span(after_s)} after {on}: {_counts_text(post['counts'])}")
+                        + ("" if app_covered else " (no Application log for this time - only System-log events checked)"))
+            if earlier:   # older than the verdict reads, but since the PC last came on
+                since_txt = f"{since} {'wake' if since.startswith('S') else 'boot'}" if since else "the start of the log"
+                tail.append(f"Earlier, since {since_txt}: {_counts_text(earlier)}")
+        post_counts = _problems(post_ev)
+        if post_counts:
+            tail.append(f"{_span(after_s)} after {on}: {_counts_text(post_counts)}")
         if sleep:
             sw.update(trigger="n/a", label="n/a", strength="n/a", strength_label="n/a", confidence=None, reasons=tail)
             return
@@ -1219,7 +1266,7 @@ class Analyzer:
         elif pre is None:
             reasons.append("The log has nothing before this boot, so what led up to it can't be checked")
         else:
-            covered = pre["app_covered"] or self._covered("system", t_off - win, t_off)
+            covered = app_covered or self._covered("system", t_off - win, t_off)
             crit, svc, drv = has("app", "critical"), has("service", "reboot"), has("system", "driver")
             hangs = has("app", "hang") + has("service", "hang")
             crashes = has("app", "crash") + has("service", "crash")
@@ -1346,20 +1393,17 @@ class Analyzer:
         self.identify()
         self.find_sleeps()
         self.classify()
+        for prefix, xs in (("T", self.transitions), ("S", self.sleeps)):   # numbered first: lists name their neighbours
+            for i, x in enumerate(xs):
+                x["id"] = f"{prefix}{i + 1}"
         self.correlate()
         self.assess()
         self.quality()
         self.inventory()
         thr = self.s["review_threshold"]
-        items = []
-        for i, t in enumerate(self.transitions):
-            t["id"] = f"T{i + 1}"
-            t["needs_review"] = t["confidence"] < thr or any(f["severity"] == "warn" for f in t["flags"])
-            items.append(t)
-        for i, sl in enumerate(self.sleeps):
-            sl["id"] = f"S{i + 1}"
-            sl["needs_review"] = sl["confidence"] < thr or any(f["severity"] == "warn" for f in sl["flags"])
-            items.append(sl)
+        items = self.transitions + self.sleeps
+        for x in items:
+            x["needs_review"] = x["confidence"] < thr or any(f["severity"] == "warn" for f in x["flags"])
         items.sort(key=lambda x: x["time_ts"] or 0)
 
         counts = Counter(t["type"] for t in self.transitions)
@@ -1405,7 +1449,7 @@ class Analyzer:
             "hard_breakdown": dict(hard_breakdown),
             "storage_counts": dict(storage_counts),
             "software_breakdown": dict(triggers),
-            "software_counts": dict(Counter(e.software["label"] for e in self.software if e.software["state"] != "info")),
+            "software_counts": _problems(self.software),
             "trigger_labels": TRIGGER_LABELS,
             "highlight_vendor": self.hl_vendor,
             "items": items,

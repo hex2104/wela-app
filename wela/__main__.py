@@ -33,10 +33,12 @@ def main(argv=None):
         for f in demo.build(args.folder):
             print(f)
         return
-    events, sources = parser.load(args.paths)
+    events, sources, skipped = parser.load(args.paths)
     for s_ in sources:
         status = s_["error"] or f"{s_['events']} events via {s_['reader']}"
         print(f"  {s_['file']}: {status}")
+    if skipped:
+        print(f"  {len(skipped)} other log(s) in the folder skipped - only System, Application and Storport are read")
     if not events:
         sys.exit("No events read.")
     r = engine.analyze(events, catalog.load_config(), sources)

@@ -363,7 +363,8 @@ def to_html(result: dict, offset_min: int = 0) -> bytes:
                          f"<td><span class='chip {state.replace(' ', '')}'>{e(state)}</span></td>"
                          f"<td>{drive}</td><td class='small'>{e(fields)}</td></tr>")
         parts.append("</table>")
-    sw_rows = [r for r in software_rows(result, offset_min)[1:] if r[8] != ""]
+    # the lists now run from one power cycle to the next: the report keeps their warnings and errors
+    sw_rows = [r for r in software_rows(result, offset_min)[1:] if r[8] != "" and r[12] != "info"]
     sw_items = [it for it in result["items"] if it["type"] != "sleep" and it.get("software")]
     if sw_items:
         parts.append("<h2>Software around each power cycle</h2><table><tr><th>ID</th><th>Type</th><th>What triggered it?</th>"
@@ -375,7 +376,7 @@ def to_html(result: dict, offset_min: int = 0) -> bytes:
                          f"<td class='small'>{'<br>'.join(e(x) for x in sw.get('reasons', []))}</td></tr>")
         parts.append("</table>")
     if sw_rows:
-        parts.append(f"<h2>App, update and service events around each power cycle</h2><table><tr><th>ID</th><th>Window</th>"
+        parts.append(f"<h2>App, update and service problems around each power cycle</h2><table><tr><th>ID</th><th>Window</th>"
                      f"<th>Offset</th><th>Time ({tz})</th><th>Event</th><th>App / update / service</th><th>Severity</th></tr>")
         for idv, _, _, _, window, off, t, prov, eid, label, subject, detail, sev, _ in sw_rows:
             parts.append(f"<tr><td>{idv}</td><td>{e(window)}</td>"

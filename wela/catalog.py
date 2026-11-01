@@ -236,8 +236,10 @@ DEFAULTS = {
         "restart_gap_s": 300,         # stop -> boot gap below this = restart (when 1074 silent)
         "long_restart_gap_s": 1800,   # 1074 says restart but gap longer -> flag
         "drive_window_s": 60,         # drive window before power-off / sleep and after boot / wake
-        "software_window_s": 900,     # app / update / service events this long before power-off / sleep
-        "software_after_s": 600,      # ... and this long after boot / wake
+        "software_window_s": 900,     # "what triggered it?" reads app / update / service events this long before
+        "software_after_s": 600,      # power-off / sleep, and this long after boot / wake
+        "software_list_max": 100,     # app / update events stored per list (power cycle before -> this one -> the
+                                      # one after), nearest first; the UI loads the rest on request
         "running_lookback_s": 3600,   # an update / install started this recently and never finished = still running
         "pt1_merge_s": 300,           # Power-Troubleshooter 1 merges into a nearby resume
         "unexplained_gap_s": 7200,    # quiet gap inside a session worth flagging

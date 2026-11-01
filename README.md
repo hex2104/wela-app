@@ -18,6 +18,8 @@ python run_wela.py
 ```
 
 Your browser opens at `http://127.0.0.1:8765`. Paste a folder or `.evtx` paths (or use **Browse**), then click **Analyze**.
+From a folder (e.g. a copy of `C:\Windows\System32\winevt\Logs`) WELA reads only **System**, **Application** and
+**Storport** (Operational and Health) and skips every other log; a file you add by itself is always read.
 Click **Try demo data** to see a synthetic case with every tricky scenario.
 
 In **VS Code**: open this folder, then press **F5** and pick **WELA: start UI**. The Run menu also has a CLI launch and a test launch.
@@ -36,9 +38,12 @@ python -m unittest discover -s tests -v
 wevtutil epl System System.evtx
 wevtutil epl Application Application.evtx
 wevtutil epl Microsoft-Windows-Storage-Storport/Operational Storport.evtx
-wevtutil epl Microsoft-Windows-Partition/Diagnostic Partition.evtx   (recommended: disk model / FW / serial, ties disk events to a drive)
+wevtutil epl Microsoft-Windows-Storage-Storport/Health Storport-Health.evtx
+wevtutil epl Microsoft-Windows-Partition/Diagnostic Partition.evtx   (optional: disk model / FW / serial, ties disk events to a drive)
 wevtutil epl Setup Setup.evtx                                         (optional: Windows servicing "needs a restart" events)
 ```
+
+Partition and Setup are not read from a folder: add them as files of their own.
 
 ## How power cycles are identified
 
@@ -97,9 +102,18 @@ wevtutil epl Setup Setup.evtx                                         (optional:
    If the drive *also* logged problems right before, the software verdict says so and loses confidence: a stalling drive
    makes apps hang and crash, so those may be a symptom rather than the cause. Each verdict has its own confidence
    (weights in `catalog.py` under `weights.software`) and lists every event behind it.
+
+   The verdict reads only those minutes, but the lists next to it run from the **previous power cycle to this one** (since
+   its boot / wake) and from **this one to the next** (until its power-off / sleep), so a cause that started hours
+   earlier is still there; one power cycle's "after" list is the next one's "before" list. Each list opens at the end
+   nearest the power cycle with the 100 nearest events (`software_list_max`); **Show … earlier / later events** loads
+   the rest. Problems older than the verdict window are summed up as *"Earlier, since T4 boot: …"*.
 9. **Confidence** is the sum of evidence weights, minus penalties for conflicts and log gaps.
    Anything below 0.6, or with a warning, is marked **Needs review**.
-10. **SMART check** tab: enter the drive's Power Cycles / Unsafe Shutdowns delta to cross-check the OS logs against the SSD.
+10. **Search**: the Power cycles, Drive and Apps & updates tabs and the detail panel have a search box. A number finds
+    exactly those event IDs (`41`, or `41, 6008`); anything else is a text search. In the detail panel it searches
+    the whole stretch, not only the events loaded. The **Near** column shows the time since the power cycle before
+    an event and to the one after it; click either to open it.
 
 All event IDs, weights, vendor rules and thresholds live in `wela/catalog.py`. Override any of them with `wela_config.json`
 next to `run_wela.py`, e.g.
@@ -113,7 +127,7 @@ next to `run_wela.py`, e.g.
 ```
 run_wela.py            start the UI
 wela/
-  parser.py            .evtx (wevtutil / PowerShell / python-evtx) and .xml -> events
+  parser.py            .evtx (wevtutil / PowerShell / python-evtx) and .xml -> events; which logs a folder gives
   catalog.py           event IDs, weights, thresholds, drive vendors, software events  <- tune here
   engine.py            timeline, integrity, boots, sessions, classification, sleep, drive identity +
                        correlation, software trigger

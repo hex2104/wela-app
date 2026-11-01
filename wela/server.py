@@ -30,14 +30,17 @@ def run_analysis(paths, name=None, settings=None):
             if k in cfg["settings"] and isinstance(v, (int, float)):
                 cfg["settings"][k] = v
     t0 = time.time()
-    events, sources = parser.load(paths)
+    events, sources, skipped = parser.load(paths)
     if not events:
         errs = "; ".join(f"{s['file']}: {s['error']}" for s in sources if s.get("error"))
+        if not sources and skipped:
+            raise ValueError(f"No System, Application or Storport log in the folder ({len(skipped)} other logs skipped).")
         raise ValueError("No events could be read." + (f" {errs}" if errs else
                          " Check the path contains .evtx or .xml files."))
     result = engine.analyze(events, cfg, sources)
     result["case_name"] = name or result.get("computer") or "case"
     result["input_paths"] = list(paths)
+    result["skipped_files"] = len(skipped)
     result["analysis_seconds"] = round(time.time() - t0, 2)
     cid = store.new_id(result["case_name"])
     result["id"] = cid
@@ -129,9 +132,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._err("Give at least one file or folder path")
                 return self._json(run_analysis(paths, body.get("name"), body.get("settings")))
             if parts == ["api", "demo"]:
-                folder = os.path.join(store.ROOT, "_demo_logs")
-                demo.build(folder)
-                return self._json(run_analysis([folder], "Demo case", body.get("settings")))
+                folder = os.path.join(store.ROOT, "_demo_logs")   # its files one by one: Partition is read too
+                return self._json(run_analysis(demo.build(folder), "Demo case", body.get("settings")))
             if parts == ["api", "pick"]:
                 return self._json({"paths": _pick(body.get("kind", "folder"))})
             return self._err("not found", 404)
@@ -167,19 +169,25 @@ class Handler(BaseHTTPRequestHandler):
             n = int(q.get("n", 25))
             sel = evs[max(0, i - n): i + n + 1]
         else:
-            f, t = q.get("from"), q.get("to")
+            # tag=software|storage: only events with that tag, without their data; last=1: the last `limit` of them
+            f, t, tag, last = q.get("from"), q.get("to"), q.get("tag"), bool(q.get("last"))
+            tag = tag if tag in ("software", "storage") else None
             text = (q.get("q") or "").lower()
+            limit = int(q.get("limit", 500))
             sel = []
             for e in evs:
                 if f and e["time"] < f:
                     continue
                 if t and e["time"] > t:
                     break
+                if tag and not e.get(tag):
+                    continue
                 if text and text not in f"{e['provider']} {e['eid']} {e['channel']} {json.dumps(e.get('data', {}))}".lower():
                     continue
-                sel.append(e)
-                if len(sel) >= int(q.get("limit", 500)):
+                sel.append({**{k: e[k] for k in ("idx", "time", "provider", "eid", "channel")}, **e[tag]} if tag else e)
+                if not last and len(sel) >= limit:
                     break
+            sel = sel[max(0, len(sel) - limit):] if last else sel
         return self._json(sel)
 
     def _export(self, cid, fmt, tz):
