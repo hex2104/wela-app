@@ -107,7 +107,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
     <div><b>Question 3</b>Which drive — is it the Samsung drive?</div>
     <div><b>Question 4</b>What triggered it — an app, an update, the user?</div>
   </div>
-  <div class="meta"><span>Version 0.1.0</span><span>Branch <b>samsung-drive-and-app-triggers</b></span><span>1 November 2026</span><span>Prepared by Hitesh Kumar</span></div>
+  <div class="meta"><span>Version 0.1.0</span><span>Branch <b>main</b></span><span>1 November 2026</span><span>Prepared by Hitesh Kumar</span></div>
 </section>
 
 <!-- ============================================================ CONTENTS -->
@@ -137,7 +137,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
   <a href="#cmds"><span>C</span><div>Appendix: commands and files<small>Run, test, collect, configure</small></div></a>
 </div>
 <div class="callout" style="margin-top:18px"><b>How to read this.</b> Each chapter opens with a one-line takeaway (blue bar).
-  Tables hold the exact rules — every number in them comes from <code>wela/catalog.py</code> and <code>wela/engine.py</code> as committed on this branch.
+  Tables hold the exact rules — every number in them comes from <code>wela/catalog.py</code> and <code>wela/engine.py</code> as committed on <code>main</code>.
   Chapter 17 is the demo script for the meeting; chapter 16 lists the caveats to state up front.</div>
 
 <!-- ============================================================ 1 GLANCE -->
@@ -822,7 +822,7 @@ python -m unittest discover -s tests -v</pre>
 <!-- ============================================================ 17 DEMO -->
 <h1 id="demo" class="pg"><span class="n">17</span>Demo script and likely questions</h1>
 <div class="lead">About 15 minutes: problem → one click → four questions answered with evidence → exports → what's next.</div>
-<div class="callout"><b>Before the meeting.</b> Check out branch <code>samsung-drive-and-app-triggers</code> · run <code>python run_wela.py</code> · set Time to <b>IST</b> · click <b>Try demo data</b> once to warm up ·
+<div class="callout"><b>Before the meeting.</b> Check out <code>main</code> · run <code>python run_wela.py</code> · set Time to <b>IST</b> · click <b>Try demo data</b> once to warm up ·
   have a real (closed) claim's logs ready as a backup · keep this document open on chapter 16.</div>
 <div class="step"><div class="tm">0:00<br>1 min</div><div><b>The problem.</b> "When an SSD comes back after crashes or sudden shutdowns, we need to know what happened to the PC, whether our drive was involved, and whether something else — Windows Update, an app, the user — triggered it. That evidence is in the Windows logs, but reading them by hand takes hours."</div></div>
 <div class="step"><div class="tm">1:00<br>1 min</div><div><b>One click.</b> Home → <i>Try demo data</i>. <b class="say">Say:</b> "Four logs, 491 events, analysed in under a second, on this PC — nothing installed, nothing sent anywhere."</div></div>
@@ -957,7 +957,7 @@ summary = next(b.text <span class="k">for</span> b <span class="k">in</span> res
 
 <!-- ============================================================ APPENDIX A -->
 <h1 id="appx"><span class="n">A</span>Appendix: event reference</h1>
-<div class="lead">Every event WELA reads, as configured in <code>catalog.py</code> on this branch.</div>
+<div class="lead">Every event WELA reads, as configured in <code>catalog.py</code> on <code>main</code>.</div>
 <h2>Power signals</h2>
 <table class="t compact">
   <thead><tr><th style="width:30%">Provider · ID</th><th>Meaning</th></tr></thead><tbody>
@@ -1032,7 +1032,7 @@ summary = next(b.text <span class="k">for</span> b <span class="k">in</span> res
 <!-- ============================================================ APPENDIX C -->
 <h1 id="cmds"><span class="n">C</span>Appendix: commands and files</h1>
 <h2>Run</h2>
-<pre class="code">git checkout samsung-drive-and-app-triggers
+<pre class="code">git checkout main
 python run_wela.py                                    <span class="c"># UI at http://127.0.0.1:8765 (next free port if busy)</span>
 python -m wela serve --port 8765 --no-browser
 python -m wela analyze &lt;folder or files&gt; --out report.html --tz 330
@@ -1060,7 +1060,7 @@ wela/
 web/                   UI (vanilla HTML/CSS/JS, works offline)
 tests/                 unittest suite (demo scenario, rule tests, robustness test)
 docs/                  team walkthrough (.pptx / .pdf), this reference and its source (src/)</pre>
-<h2>This release (branch samsung-drive-and-app-triggers)</h2>
+<h2>This release (main)</h2>
 <h3>Update of 1 November 2026</h3>
 <ul>
   <li><b>App / update lists run cycle to cycle:</b> from the power cycle before to this one and on to the next — 100 nearest first, the rest on request; scroll boxes open at the end nearest the power cycle; "Earlier, since …" in the reasons.</li>
