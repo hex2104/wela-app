@@ -33,10 +33,12 @@ def main(argv=None):
         for f in demo.build(args.folder):
             print(f)
         return
-    events, sources = parser.load(args.paths)
+    events, sources, skipped = parser.load(args.paths)
     for s_ in sources:
         status = s_["error"] or f"{s_['events']} events via {s_['reader']}"
         print(f"  {s_['file']}: {status}")
+    if skipped:
+        print(f"  {len(skipped)} other log(s) in the folder skipped - only System, Application and Storport are read")
     if not events:
         sys.exit("No events read.")
     r = engine.analyze(events, catalog.load_config(), sources)
@@ -45,15 +47,21 @@ def main(argv=None):
     print(f"  shutdown {c['shutdown']}  restart {c['restart']}  hard {c['hard']}  undetermined {c['unknown']}  "
           f"sleep {c['sleep']}  hibernate {c['hibernate']}  modern-standby {c['modern_standby']}  "
           f"needs review {c['needs_review']}")
+    hv = r["highlight_vendor"]
     print(f"  drive caused it: likely {c['drive_likely']}  possibly {c['drive_possible']}  "
           f"no drive evidence {c['drive_no_evidence']}  can't tell {c['drive_unknown']}  "
-          f"drive errors after boot/wake {c['drive_effect']}\n")
+          f"drive errors after boot/wake {c['drive_effect']}")
+    print(f"  {hv} drive: suspected in {c['hl_suspect']}, problems around {c['hl_cycles']} power cycle(s), "
+          f"{c['hl_events']} warning/error event(s)   triggered by software: {c['software']}\n")
     for it in r["items"]:
         mark = "!" if it["needs_review"] else " "
-        d = it["drive"]
+        d, sw = it["drive"], it["software"]
         cause = f"  caused it? {d['cause_label']}" if it["type"] != "sleep" else ""
+        sam = {"yes": f" [{hv}]", "probably": f" [{hv}?]"}.get(d["highlight"], "")
+        strength = f" ({sw['strength_label']})" if sw["strength"] in ("confirmed", "likely", "possible") else ""
+        trig = f"  trigger: {sw['label']}{strength}" if it["type"] != "sleep" else ""
         print(f" {mark} {it['id']:>4}  {it['time'][:19]}  {it['type']:<9} {it['subtype'][:44]:<44} "
-              f"{int(it['confidence'] * 100):>3}%  drive:{d['state']:<8}{cause}")
+              f"{int(it['confidence'] * 100):>3}%  drive:{d['state']:<8}{cause}{sam}{trig}")
     if args.out:
         fmt = args.out.rsplit(".", 1)[-1].lower()
         fn = {"html": report.to_html, "xlsx": report.to_xlsx, "csv": report.to_csv}.get(fmt)

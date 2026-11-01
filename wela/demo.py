@@ -32,7 +32,28 @@ EXPECTED_TRANSITIONS = [
     ("T12", "shutdown", "Full shutdown"),
     ("T13", "restart", "Restart"),                # no 1074, inferred from gap
     ("T14", "shutdown", "Full shutdown"),
+    ("T15", "hard", "Power loss"),                # while an update was installing
+    ("T16", "restart", "Restart"),                # lsass.exe crashed, Windows restarted
 ]
+# (id, expected software trigger, expected strength) - used by tests
+EXPECTED_TRIGGERS = [
+    ("T2", "user", "confirmed"),
+    ("T3", "update", "confirmed"),
+    ("T7", "crash", "possible"),
+    ("T8", "hang", "possible"),
+    ("T10", "none", "none"),
+    ("T11", "unknown", "unknown"),
+    ("T13", "installer", "likely"),
+    ("T15", "update_running", "possible"),
+    ("T16", "critical", "confirmed"),
+]
+SSD = {"Model": "SAMSUNG MZVL21T0HDEMO-00B00", "SerialNumber": "DEMO-SN-0001", "Revision": "FW1.0-DEMO"}
+# how Storport names the same drive: SCSI-style vendor / 16-character product ID, serial in another format
+SSD_STORPORT = {"MiniportName": "stornvme", "VendorId": "NVMe", "ProductId": "SAMSUNG MZVL21T0",
+                "ProductRevision": "FW1.0-DE", "SerialNumber": "DEMO_SN_0001."}
+USB = {"Model": "WDC WD10SPZX-DEMO", "SerialNumber": "DEMO-USB-0002", "Revision": "01.01A01"}
+APP_ERR = ("AppName", "AppVersion", "AppTimeStamp", "ModuleName", "ModuleVersion", "ModuleTimeStamp", "ExceptionCode",
+           "FaultingOffset", "ProcessId", "ProcessCreationTime", "AppPath", "ModulePath", "IntegratorReportId")
 
 
 def _t(day: int, hhmm: str, sec: int = 0) -> datetime:
@@ -80,17 +101,20 @@ class Log:
         self.add(t + timedelta(seconds=14), "EventLog", 6009, data=["10.00.", "22631", "", "Multiprocessor Free", "0"], qualifiers=32768)
         self.add(t + timedelta(seconds=14), "EventLog", 6005, data=[], qualifiers=32768)
         if inventory:
-            self.add(t + timedelta(seconds=3), "Microsoft-Windows-Partition", 1006, chan=PART, data={
-                "Manufacturer": "DEMO", "Model": "DEMO NVMe SSD 1TB", "Revision": "FW1.0-DEMO",
-                "SerialNumber": "DEMO-SN-0001", "BusType": "17", "Capacity": "1024209543168"})
+            self.inventory(t + timedelta(seconds=3))
 
-    def clean_stop(self, t, kind="power off", with_6006=True, with_1074=True, reason="Other (Unplanned)",
-                   process="C:\\Windows\\System32\\RuntimeBroker.exe (DEMO-LAPTOP-01)"):
+    def inventory(self, t, disk=0, drive=SSD, bus=17, parent="PCI\\VEN_144D&DEV_DEMO&SUBSYS_DEMO&REV_00\\4&DEMO&0&00E8"):
+        self.add(t, "Microsoft-Windows-Partition", 1006, chan=PART, data={
+            "DiskNumber": disk, "Manufacturer": "NVMe" if bus == 17 else "", **drive, "BusType": bus,
+            "Capacity": "1024209543168" if bus == 17 else "1000204886016", "ParentId": parent})
+
+    def clean_stop(self, t, kind="power off", with_6006=True, with_1074=True, reason="Other (Unplanned)", code="0x0",
+                   process="C:\\Windows\\System32\\RuntimeBroker.exe (DEMO-LAPTOP-01)", comment="", user="DEMO\\engineer"):
         self.add(t - timedelta(seconds=20), "Microsoft-Windows-Winlogon", 7002, data={"TSId": "1", "UserSid": "S-1-5-21-DEMO"})
         if with_1074:
             self.add(t - timedelta(seconds=18), "User32", 1074, qualifiers=32768, data={
-                "param1": process, "param2": HOST, "param3": reason, "param4": "0x0",
-                "param5": kind, "param6": "", "param7": "DEMO\\engineer"})
+                "param1": process, "param2": HOST, "param3": reason, "param4": code,
+                "param5": kind, "param6": comment, "param7": user})
         self.add(t - timedelta(seconds=4), "Microsoft-Windows-Kernel-Power", 109, data={
             "ShutdownActionType": "5", "ShutdownEventCode": "0", "ShutdownReason": "1"})
         self.add(t - timedelta(seconds=2), "Microsoft-Windows-Kernel-General", 13, data={"StopTime": _ts(t)})
@@ -130,7 +154,7 @@ class Log:
                          data={"param1": "2026-09-30T00:00:00Z", "param2": "RulesEngine"})
             if t >= _t(3, "00:00") and n % 3 == 1:
                 self.add(t + timedelta(seconds=5), "Microsoft-Windows-StorPort", 505, chan=STP,
-                         data={"Port": "0", "Bus": "0", "Target": "0", "LUN": "0", "ClassDeviceGuid": "{DEMO}"})
+                         data={"Port": "0", "Bus": "0", "Target": "0", "LUN": "0", "ClassDeviceGuid": "{DEMO}", **SSD_STORPORT})
             t += timedelta(minutes=every_min)
             n += 1
 
@@ -144,7 +168,20 @@ class Log:
         if t >= _t(3, "00:00"):
             for i in range(storport_warn):
                 self.add(t + timedelta(seconds=2 + 9 * i), "Microsoft-Windows-StorPort", 549, level=3, chan=STP,
-                         data={"Port": "0", "Bus": "0", "Target": "0", "LUN": "0", "Opcode": "42"})
+                         data={"Port": "0", "Bus": "0", "Target": "0", "LUN": "0", "Opcode": "42", **SSD_STORPORT})
+
+    def app(self, t, prov, eid, level=4, data=None):
+        self.add(t, prov, eid, level=level, chan=APP, data=data)
+
+    def app_crash(self, t, exe, code="0xc0000005", module="ntdll.dll"):
+        vals = [exe, "10.0.22621.1", "0x0", module, "10.0.22621.1", "0x0", code, "0x000000000002f1a4", "0x1d2c",
+                "0x01db0000demo", f"C:\\Windows\\System32\\{exe}", f"C:\\Windows\\SYSTEM32\\{module}", "demo-report-id"]
+        self.app(t, "Application Error", 1000, level=2, data=dict(zip(APP_ERR, vals)))
+
+    def windows_update(self, t, kind, title):
+        eid = {"start": 43, "done": 19, "restart": 21}[kind]
+        self.add(t, "Microsoft-Windows-WindowsUpdateClient", eid, data={
+            "updateTitle": title, "updateGuid": "{DEMO}", "updateRevisionNumber": "1", "serviceGuid": "{DEMO}"})
 
     def write(self, folder):
         os.makedirs(folder, exist_ok=True)
@@ -175,8 +212,12 @@ def build(folder: str) -> list:
     L.filler(_t(2, "08:55"), _t(2, "12:30"))
     L.sleep(_t(2, "12:30"), _t(2, "13:15"))                                 # S: full evidence
     L.filler(_t(2, "13:15"), _t(2, "17:00"))
-    L.clean_stop(_t(2, "17:00"), kind="restart", reason="Operating System: Upgrade (Planned)",
-                 process="C:\\Windows\\servicing\\TrustedInstaller.exe (DEMO-LAPTOP-01)")
+    kb = "2026-09 Cumulative Update for Windows 11 (KB5099001) DEMO"
+    L.windows_update(_t(2, "16:46"), "start", kb)
+    L.windows_update(_t(2, "16:52"), "done", kb)
+    L.windows_update(_t(2, "16:53"), "restart", kb)
+    L.clean_stop(_t(2, "17:00"), kind="restart", reason="Operating System: Upgrade (Planned)", code="0x80020003",
+                 process="C:\\Windows\\servicing\\TrustedInstaller.exe (DEMO-LAPTOP-01)", user="NT AUTHORITY\\SYSTEM")
     L.boot(_t(2, "17:01", 25))                                              # -> T3 restart
     L.filler(_t(2, "17:01"), _t(2, "20:00"))
     L.clean_stop(_t(2, "20:00"))
@@ -197,19 +238,28 @@ def build(folder: str) -> list:
     for i in range(4):
         L.add(_t(4, "10:14", 10 + 8 * i), "Microsoft-Windows-WHEA-Logger", 17, level=3, data={
             "ErrorSource": "4", "PrimaryDeviceName": "PCI\\VEN_DEMO&DEV_0001", "SecondaryDeviceName": ""})
-    L.add(_t(4, "10:14", 50), "Application Error", 1000, level=2, chan=APP, data=["demo.exe", "1.0", "0xc0000005"])
+    L.app_crash(_t(4, "10:14", 50), "demo.exe")
     L.boot(_t(4, "10:17"))                                                  # -> T7 crash
     L.k41(_t(4, "10:17", 20), bugcheck=159)
     L.e6008(_t(4, "10:17", 16), _t(4, "10:15"))
     L.add(_t(4, "10:19"), "Microsoft-Windows-WER-SystemErrorReporting", 1001, level=2, qualifiers=16384, data={
         "param1": "0x0000009f (0x0000000000000003, 0xffffdemo, 0xffffdemo, 0xffffdemo)",
         "param2": "C:\\Windows\\MEMORY.DMP", "param3": "DEMO"})
+    L.app(_t(4, "10:19", 30), "Windows Error Reporting", 1001, data=[
+        "0", "5", "BlueScreen", "Not available", "0", "9f", "3", "ffffdemo", "ffffdemo", "ffffdemo"])
     L.filler(_t(4, "10:17"), _t(4, "12:58"))
     L.drive_trouble(_t(4, "12:58"), resets=3, retries=2)
+    L.app(_t(4, "12:58", 30), "Application Hang", 1002, level=2, data=["explorer.exe", "10.0.22621.1", "demo", "0"])
+    L.app(_t(4, "12:58", 35), "Application Hang", 1002, level=2, data=["demo-editor.exe", "1.0", "demo", "0"])
     L.boot(_t(4, "13:03"))                                                  # -> T8 long-press
     L.k41(_t(4, "13:03", 20), power_button=133700000000000000)
     L.e6008(_t(4, "13:03", 16), _t(4, "12:59"))
     L.filler(_t(4, "13:03"), _t(4, "16:00"))
+    # a USB drive (another vendor) is plugged in: its errors must not be pinned on the internal drive
+    L.inventory(_t(4, "15:00"), disk=1, drive=USB, bus=7, parent="USBSTOR\\DISK&VEN_WD&PROD_DEMO\\DEMO-USB")
+    L.add(_t(4, "15:59", 30), "disk", 153, level=3, qualifiers=32772,
+          data=["\\Device\\Harddisk1\\DR1", "0x0", "0", "", "", ""])
+    L.add(_t(4, "15:59", 40), "Microsoft-Windows-Ntfs", 50, level=2, data={"DriveName": "E:", "DeviceName": "\\Device\\HarddiskVolume9"})
     L.sleep(_t(4, "16:00"), _t(4, "16:40"), enter=False, resume=False, wake="Keyboard")  # S: only PT-1
     L.filler(_t(4, "16:40"), _t(4, "22:00"))
     L.sleep(_t(4, "22:00"), None, resume=False, report=False)               # never resumed
@@ -231,12 +281,27 @@ def build(folder: str) -> list:
     L.add(_t(6, "12:00"), "Microsoft-Windows-Kernel-General", 1, data={
         "NewTime": _ts(_t(6, "10:00")), "OldTime": _ts(_t(6, "12:00")), "Reason": "2",
         "ProcessName": "C:\\Windows\\System32\\rundll32.exe"})
+    L.app(_t(6, "17:58"), "MsiInstaller", 11707, data=["Product: DEMO Tools -- Installation completed successfully.", "", ""])
+    L.app(_t(6, "17:58", 1), "MsiInstaller", 1038, data=["DEMO Tools", "1.0", "1033", "DEMO Corp", "1", "1"])
+    L.app(_t(6, "17:59"), "MsiInstaller", 1005, data=["DEMO Tools", "1.0", "1033", "DEMO Corp"])
     L.clean_stop(_t(6, "18:00"), with_1074=False)
     L.boot(_t(6, "18:01"))                                                  # -> T13 restart inferred
     L.filler(_t(6, "18:01"), _t(6, "18:30"))
     L.clean_stop(_t(6, "18:30"))
     L.boot(_t(7, "09:00"))                                                  # -> T14 full shutdown
-    L.filler(_t(7, "09:00"), _t(7, "12:00"))
+    L.filler(_t(7, "09:00"), _t(7, "10:06"))
+    L.windows_update(_t(7, "10:06"), "start", "2026-09 Cumulative Update for Windows 11 (KB5099002) DEMO")
+    L.boot(_t(7, "10:25"))                                                  # -> T15 power lost mid-update
+    L.k41(_t(7, "10:25", 20))
+    L.e6008(_t(7, "10:25", 16), _t(7, "10:06"))
+    L.filler(_t(7, "10:25"), _t(7, "11:00"))
+    L.app_crash(_t(7, "11:00"), "lsass.exe")
+    L.clean_stop(_t(7, "11:00", 20), kind="restart", reason="No title for this reason could be found", code="0x50006",
+                 process="C:\\Windows\\system32\\wininit.exe (DEMO-LAPTOP-01)", user="NT AUTHORITY\\SYSTEM",
+                 comment="The system process 'C:\\WINDOWS\\system32\\lsass.exe' terminated unexpectedly with status "
+                         "code -1073741819.  The system will now shut down and restart.")
+    L.boot(_t(7, "11:01"))                                                  # -> T16 restart after lsass crash
+    L.filler(_t(7, "11:01"), _t(7, "12:00"))
     return L.write(folder)
 
 

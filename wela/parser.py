@@ -5,7 +5,8 @@ Supported inputs
              falling back to PowerShell Get-WinEvent; on other OSes via the
              optional `python-evtx` package.
   * .xml   - events exported as XML (wevtutil qe ... /f:xml, or WELA demo logs).
-A path may be a file or a folder (searched recursively).
+A path may be a file or a folder (searched recursively). From a folder only the
+FOLDER_LOGS are read; a file given by itself is always read.
 """
 from __future__ import annotations
 
@@ -21,6 +22,10 @@ from .models import Event, parse_time
 
 _INVALID_XML = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 SUPPORTED = (".evtx", ".xml")
+# A claim folder - often a copy of C:\Windows\System32\winevt\Logs - holds hundreds of logs; only these are read
+# from it. winevt\Logs names each file after its channel, with %4 for "/".
+FOLDER_LOGS = ("System", "Application", "Microsoft-Windows-Storage-Storport/Operational",
+               "Microsoft-Windows-Storage-Storport/Health")
 
 
 def _local(tag: str) -> str:
@@ -176,8 +181,22 @@ def parse_evtx(path: str) -> Tuple[List[Event], str]:
     raise RuntimeError("; ".join(errors))
 
 
-def expand_paths(paths: Iterable[str]) -> List[str]:
+def folder_log(name: str) -> bool:
+    """Is this file in a folder one of the FOLDER_LOGS? Judged by its name, as exported or as in winevt\\Logs."""
+    s = os.path.splitext(os.path.basename(name))[0].lower()
+    if "%4" in s:                         # named after its channel: Microsoft-Windows-Storage-Storport%4Health
+        return s.replace("%4", "/") in {c.lower() for c in FOLDER_LOGS}
+    if "storport" in s:                   # exported under a name of its own: Storport.evtx, Storport-Health.evtx
+        return True
+    if s.startswith("microsoft-"):        # another log named after its channel
+        return False
+    return bool(re.search(r"(?<![a-z])(system|application)", s))   # System.evtx, PC01_Application.evtx
+
+
+def expand_paths(paths: Iterable[str]) -> Tuple[List[str], List[str]]:
+    """Return (files to read, files skipped in folders because they are not FOLDER_LOGS)."""
     files: List[str] = []
+    skipped: List[str] = []
     for p in paths:
         p = os.path.expanduser(p.strip().strip('"').strip("'"))
         if not p:
@@ -186,19 +205,20 @@ def expand_paths(paths: Iterable[str]) -> List[str]:
             for root, _, names in os.walk(p):
                 for n in sorted(names):
                     if n.lower().endswith(SUPPORTED):
-                        files.append(os.path.join(root, n))
+                        (files if folder_log(n) else skipped).append(os.path.join(root, n))
         elif os.path.isfile(p):
             files.append(p)
         else:
             raise FileNotFoundError(f"Path not found: {p}")
-    return files
+    return files, skipped
 
 
-def load(paths: Iterable[str]) -> Tuple[List[Event], List[dict]]:
-    """Return (events, per-file source info)."""
+def load(paths: Iterable[str]) -> Tuple[List[Event], List[dict], List[str]]:
+    """Return (events, per-file source info, files skipped in folders)."""
     events: List[Event] = []
     sources: List[dict] = []
-    for f in expand_paths(paths):
+    files, skipped = expand_paths(paths)
+    for f in files:
         info = {"file": os.path.basename(f), "path": f, "events": 0, "reader": None, "error": None}
         try:
             if f.lower().endswith(".xml"):
@@ -213,4 +233,4 @@ def load(paths: Iterable[str]) -> Tuple[List[Event], List[dict]]:
         except Exception as exc:
             info["error"] = str(exc)
         sources.append(info)
-    return events, sources
+    return events, sources, skipped

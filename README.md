@@ -1,7 +1,9 @@
 # WELA — Windows Event Log Analyzer
 
 Rebuilds every **power cycle** (normal shutdown, restart, hard shutdown, sleep / hibernate / Modern Standby)
-from a claim's Windows event logs, shows what the **SSD** was doing around each one, and flags anything uncertain.
+from a claim's Windows event logs, shows what the **SSD** was doing around each one — and **which drive** it was,
+with **Samsung** drives highlighted — finds the **app crash, update, installer or service failure** that triggered it,
+and flags anything uncertain.
 
 - **No installs on Windows.** Pure Python standard library; `.evtx` is read with Windows' own `wevtutil`.
 - **Runs locally.** The UI is served on `127.0.0.1` only. No internet, no data leaves the PC.
@@ -16,6 +18,8 @@ python run_wela.py
 ```
 
 Your browser opens at `http://127.0.0.1:8765`. Paste a folder or `.evtx` paths (or use **Browse**), then click **Analyze**.
+From a folder (e.g. a copy of `C:\Windows\System32\winevt\Logs`) WELA reads only **System**, **Application** and
+**Storport** (Operational and Health) and skips every other log; a file you add by itself is always read.
 Click **Try demo data** to see a synthetic case with every tricky scenario.
 
 In **VS Code**: open this folder, then press **F5** and pick **WELA: start UI**. The Run menu also has a CLI launch and a test launch.
@@ -34,8 +38,12 @@ python -m unittest discover -s tests -v
 wevtutil epl System System.evtx
 wevtutil epl Application Application.evtx
 wevtutil epl Microsoft-Windows-Storage-Storport/Operational Storport.evtx
-wevtutil epl Microsoft-Windows-Partition/Diagnostic Partition.evtx   (optional: disk model / FW / serial)
+wevtutil epl Microsoft-Windows-Storage-Storport/Health Storport-Health.evtx
+wevtutil epl Microsoft-Windows-Partition/Diagnostic Partition.evtx   (optional: disk model / FW / serial, ties disk events to a drive)
+wevtutil epl Setup Setup.evtx                                         (optional: Windows servicing "needs a restart" events)
 ```
+
+Partition and Setup are not read from a folder: add them as files of their own.
 
 ## How power cycles are identified
 
@@ -66,15 +74,52 @@ wevtutil epl Microsoft-Windows-Partition/Diagnostic Partition.evtx   (optional: 
    reasons, and the Excel export has a *Drive windows* sheet with every event from both windows of every power cycle.
    *No drive evidence* is not proof the drive is fine: Windows keeps its logs on the system drive, so a drive that
    froze suddenly may never have saved its last events. Cross-check the drive's own SMART and error logs.
-7. **Confidence** is the sum of evidence weights, minus penalties for conflicts and log gaps.
-   Anything below 0.6, or with a warning, is marked **Needs review**.
-8. **SMART check** tab: enter the drive's Power Cycles / Unsafe Shutdowns delta to cross-check the OS logs against the SSD.
+7. **Which drive?** Every storage event is tied to a physical drive, and the basis is shown next to it:
 
-All event IDs, weights and thresholds live in `wela/catalog.py`. Override any of them with `wela_config.json`
+   | Basis | How | Shown as |
+   |---|---|---|
+   | Named in the event | Storport `VendorId` / `ProductId` / `SerialNumber`, Partition `Model`, a PCI ID such as `VEN_144D` (WHEA), or a Samsung `MZ…` part number | **Samsung** (solid) |
+   | Disk number | the event names `\Device\HarddiskN`, and the Partition/Diagnostic 1006 inventory *of that boot* says which drive was disk N (numbers can change between boots) | **Samsung** (solid) |
+   | Only drive | the event names no drive (e.g. `stornvme 129` on `RaidPort0`), but only one drive is in that boot — or in the logs — and the event does not point at another disk number | **Samsung?** (outlined, "probably") |
+   | Not identified | two or more drives and nothing names one, or a WHEA event naming e.g. an Intel root port | no badge |
+
+   WHEA events are never guessed — their PCIe device may be a Wi-Fi card or the GPU. The same drive seen as
+   `SAMSUNG MZVL2512` (Storport, 16 characters) and `SAMSUNG MZVL2512HCJQ-00B00` (Partition) is merged, also when one log
+   reports the serial and the other the NVMe EUI-64. Samsung warning / error events are highlighted in teal in the UI,
+   the HTML report and the Excel workbook. Change `highlight_vendor` in `catalog.py` to highlight another vendor.
+8. **What triggered it?** (software) For every power cycle, the 15 min before power-off and the 10 min after boot:
+
+   | Evidence | Verdict |
+   |---|---|
+   | User32 1074 names the process that asked | **Confirmed** — Windows Update (TrustedInstaller, MoUsoCoreWorker …), software installer (msiexec …), OEM / vendor tool (Dell Command Update, Samsung Magician …), IT management (SCCM, Intune), script (shutdown.exe, PowerShell), system process crash (wininit, *"lsass.exe terminated unexpectedly"*) or user request (Start menu). The 1074 **reason code** is decoded too — it is the same in every Windows language, so "Update and restart" from the Start menu counts as Windows Update |
+   | No 1074, but MsiInstaller 1005, Windows Update 22 or a 7031 service crash whose recovery action restarts the PC | **Likely** |
+   | No 1074, but an update / install was waiting for a restart (WU 21, MSI 1038, Servicing 4) | **Possibly** (restarts only) |
+   | Hard shutdown after a system process crash (csrss, lsass …), likely if the crash code is 0xEF / 0xF4 | **Likely / Possibly** |
+   | Hard shutdown while an update (WU 43) or install (MSI 1040) was still running | **Possibly** |
+   | Hard shutdown right after apps or services hung (1002, 7043, 7011), a display driver timeout (4101) or an app crash (1000) | **Possibly** |
+   | Application and System logs cover the window, nothing found | **No software evidence** |
+
+   If the drive *also* logged problems right before, the software verdict says so and loses confidence: a stalling drive
+   makes apps hang and crash, so those may be a symptom rather than the cause. Each verdict has its own confidence
+   (weights in `catalog.py` under `weights.software`) and lists every event behind it.
+
+   The verdict reads only those minutes, but the lists next to it run from the **previous power cycle to this one** (since
+   its boot / wake) and from **this one to the next** (until its power-off / sleep), so a cause that started hours
+   earlier is still there; one power cycle's "after" list is the next one's "before" list. Each list opens at the end
+   nearest the power cycle with the 100 nearest events (`software_list_max`); **Show … earlier / later events** loads
+   the rest. Problems older than the verdict window are summed up as *"Earlier, since T4 boot: …"*.
+9. **Confidence** is the sum of evidence weights, minus penalties for conflicts and log gaps.
+   Anything below 0.6, or with a warning, is marked **Needs review**.
+10. **Search**: the Power cycles, Drive and Apps & updates tabs and the detail panel have a search box. A number finds
+    exactly those event IDs (`41`, or `41, 6008`); anything else is a text search. In the detail panel it searches
+    the whole stretch, not only the events loaded. The **Near** column shows the time since the power cycle before
+    an event and to the one after it; click either to open it.
+
+All event IDs, weights, vendor rules and thresholds live in `wela/catalog.py`. Override any of them with `wela_config.json`
 next to `run_wela.py`, e.g.
 
 ```json
-{ "settings": { "drive_window_s": 120, "restart_gap_s": 600 } }
+{ "settings": { "drive_window_s": 120, "restart_gap_s": 600, "software_window_s": 1800 } }
 ```
 
 ## Project layout
@@ -82,18 +127,25 @@ next to `run_wela.py`, e.g.
 ```
 run_wela.py            start the UI
 wela/
-  parser.py            .evtx (wevtutil / PowerShell / python-evtx) and .xml -> events
-  catalog.py           event IDs, weights, thresholds  <- tune here
-  engine.py            timeline, integrity, boots, sessions, classification, sleep, drive correlation
+  parser.py            .evtx (wevtutil / PowerShell / python-evtx) and .xml -> events; which logs a folder gives
+  catalog.py           event IDs, weights, thresholds, drive vendors, software events  <- tune here
+  engine.py            timeline, integrity, boots, sessions, classification, sleep, drive identity +
+                       correlation, software trigger
   report.py            HTML / Excel / CSV / JSON export (no dependencies)
   server.py            local HTTP server + API
   store.py             cases saved under ./cases
   demo.py              synthetic demo logs with expected verdicts
 web/                   UI (vanilla HTML/CSS/JS, works offline)
-tests/                 unittest suite (demo scenario + rule tests)
+tests/                 unittest suite (demo scenario, rule tests, random-input robustness test)
+docs/                  team walkthrough (.pptx / .pdf) and WELA-technical-reference.pdf (how every
+                       verdict is made, demo script, limitations, roadmap, AI integration);
+                       src/ holds its HTML source and screenshots (print command at the top)
 ```
 
 ## Before relying on it
 
 The event IDs are the standard Windows ones, but validate on your own data: run WELA on 20–30 closed claims with
 known answers, and on lab machines where you trigger each power cycle type on purpose. Then tune `catalog.py`.
+In particular, check on real claims that the Storport events name the drive (open one in the drawer — the Drive line
+says how it was identified), and trigger a Windows Update restart, an installer restart and a forced power-off
+during an app hang on a lab machine to see the software verdicts.

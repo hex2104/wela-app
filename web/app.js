@@ -31,13 +31,32 @@ const ICON = {
   flask: '<svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4 20a1 1 0 0 0 .9 1.5h14.2A1 1 0 0 0 20 20l-6-11V3"/></svg>',
 };
 
-const S = { cases: [], c: null, tab: "overview", filter: "all", q: "", tl: null, selected: null, settings: null };
+/* v: search / filter inputs by element id, kept while the case is open */
+const S = { cases: [], c: null, tab: "overview", filter: "all", v: {}, tl: null, selected: null, settings: null };
 
 /* ------------------------------------------------------------------ utils */
 const store = {
   get(k, d) { try { const v = localStorage.getItem("wela." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem("wela." + k, JSON.stringify(v)); } catch { /* ignore */ } },
 };
+const debounce = (fn, ms = 150) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+/* search: event IDs ("41" or "41, 6008") match exactly, anything else is a text search. null = no search */
+function matcher(q) {
+  q = (q || "").trim().toLowerCase();
+  if (!q) return null;
+  if (/^\d+(?:[\s,;]+\d+)*$/.test(q)) { const ids = new Set(q.split(/[\s,;]+/).map(Number)); return (eids) => eids.some((x) => ids.has(+x)); }
+  return (eids, text) => text.toLowerCase().includes(q);
+}
+const searchBox = (id, cls = "") => `<input type="search" id="${id}" class="${cls}" placeholder="Event ID or text" autocomplete="off">`;
+/* inputs that keep their value in S.v across re-renders and redraw on change */
+function bind(ids, draw) {
+  ids.forEach((id) => {
+    const el = $("#" + id); if (!el) return;
+    if (S.v[id] != null) el.value = S.v[id];
+    const sel = el.tagName === "SELECT";
+    el[sel ? "onchange" : "oninput"] = debounce(() => { S.v[id] = el.value; draw(); }, sel ? 0 : 150);
+  });
+}
 async function api(path, opts = {}) {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
   const j = await r.json().catch(() => ({}));
@@ -85,10 +104,56 @@ const causeChip = (d) => (d?.cause ? `<span class="chip ${CAUSE_CLS[d.cause]}">$
 const effectChip = (d) => (d?.effect ? `<span class="chip ${EFFECT_CLS[d.effect]}">${esc(d.effect_label)}</span>` : "");
 const isSuspect = (it) => ["likely", "possible"].includes(it.drive?.cause);
 const hitAfter = (it) => ["errors", "missing"].includes(it.drive?.effect);
+/* which drive: the highlighted vendor (Samsung) gets its own colour everywhere */
+const HV = () => S.c?.highlight_vendor || "Samsung";
+const isHl = (x) => x === "yes" || x === "probably";
+const hlCycle = (it) => isHl(it.drive?.highlight);
+const HL_CLS = { yes: "sam", probably: "samp", no: "other", unknown: "nodata" };
+const hlChip = (d) => (d?.highlight && HL_CLS[d.highlight] ? `<span class="chip ${HL_CLS[d.highlight]}">${esc(d.highlight_label)}</span>` : "");
+function devBadge(e) {
+  const tip = esc(`${e.dev || "Drive not identified"} · ${e.dev_basis || ""}`);
+  if (e.hl === "yes") return `<span class="chip sam" title="${tip}">${esc(HV())}</span>`;
+  if (e.hl === "probably") return `<span class="chip samp" title="${tip}">${esc(HV())}?</span>`;
+  if (e.hl === "no") return `<span class="chip other" title="${tip}">${esc(e.vendor || "other drive")}</span>`;
+  return "";
+}
+const devLine = (e) => (e.dev_basis && e.state !== "info" ? `<div class="wd">${esc(e.dev ? `Drive: ${e.dev} · ${e.dev_basis}` : `Drive ${e.dev_basis}`)}</div>` : "");
+/* what triggered it (software) */
+const SW_CLS = { confirmed: "sw", likely: "sw", possible: "swp" };
+const swConf = (s) => (s?.confidence != null ? ` · ${Math.round(s.confidence * 100)}%` : "");
+const swChip = (s) => (s?.trigger ? `<span class="chip ${SW_CLS[s.strength] || "nodata"}" title="${esc(s.strength_label + swConf(s))}">${esc(s.label)}</span>` : "");
+const isSoftware = (it) => ["confirmed", "likely", "possible"].includes(it.software?.strength) && it.software?.trigger !== "user";
+const swLabel = (k) => S.c?.trigger_labels?.[k] || k;
 function fmtOff(s) {
   if (s == null) return "";
   const a = Math.abs(s);
-  return `${s < 0 ? "−" : "+"}${a < 10 && a % 1 ? a.toFixed(1) : Math.round(a)}s`;
+  return (s < 0 ? "−" : "+") + (a >= 60 ? fmtDur(a) : `${a < 10 && a % 1 ? a.toFixed(1) : Math.round(a)}s`);
+}
+/* the power cycles around a moment: time since the boot / wake of the one before, to the power-off / sleep of the next */
+const bisect = (arr, before) => { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (before(arr[m])) lo = m + 1; else hi = m; } return lo; };
+const cycLink = (x, label = `${x.id} ${TYPES[x.type].short}`) => `<a class="cyc" data-id="${esc(x.id)}" title="${esc(x.subtype)}">${esc(label)}</a>`;
+function cycleMarks() {
+  if (S.cm?.c !== S.c) {
+    const m = S.c.items.map((x) => {
+      const [off, on] = x.type === "sleep" ? [x.start_ts, x.end_ts] : [x.last_alive_ts, x.boot_ts];
+      return { x, off: off ?? on, on };
+    });
+    S.cm = { c: S.c, ons: m.filter((o) => o.on != null).sort((a, b) => a.on - b.on), offs: m.filter((o) => o.off != null).sort((a, b) => a.off - b.off) };
+  }
+  return S.cm;
+}
+function nearCell(t) {
+  const { ons, offs } = cycleMarks(), i = bisect(offs, (o) => o.off < t), cur = offs[i - 1];
+  if (cur?.on > t) return `<div>during ${cycLink(cur.x)}</div>`;
+  const prev = ons[bisect(ons, (o) => o.on <= t) - 1], next = offs[i];
+  return (prev ? `<div>${fmtDur(t - prev.on)} after ${cycLink(prev.x)}</div>` : "") + (next ? `<div>${fmtDur(next.off - t)} before ${cycLink(next.x)}</div>` : "");
+}
+/* table rows open their event; a power cycle link in them opens the power cycle */
+function onRows(el, open) {
+  el.onclick = (ev) => {
+    const a = ev.target.closest("a.cyc"); if (a) return openDetail(a.dataset.id);
+    const r = ev.target.closest("tr.click"); if (r) open(r);
+  };
 }
 
 /* ------------------------------------------------------------------ sidebar */
@@ -110,20 +175,20 @@ async function loadCases() {
 function renderHome() {
   S.c = null; closeDrawer(); loadCases();
   const st = S.settings || {};
-  const saved = store.get("paths", "");
   $("#main").innerHTML = `
   <div class="home">
     <div class="card hero">
       <h1>Analyze Windows event logs</h1>
-      <p>Point WELA at a claim's <b>.evtx</b> files (System, Application, Storport) or the folder that holds them.
-         It rebuilds every power cycle, checks what the drive was doing around each one, and flags anything uncertain.</p>
+      <p>Point WELA at a claim's log folder or <b>.evtx</b> files. From a folder it reads only <b>System</b>, <b>Application</b>
+         and <b>Storport</b> (Operational, Health). It rebuilds every power cycle, checks what the drive was doing around each one,
+         and flags anything uncertain.</p>
       <div class="dropzone">
-        <textarea id="paths" spellcheck="false" placeholder="One file or folder per line, e.g.&#10;D:\\Claims\\DELL-12345\\Logs&#10;D:\\Claims\\DELL-12345\\System.evtx">${esc(saved)}</textarea>
+        <textarea id="paths" spellcheck="false" autocomplete="off" placeholder="One file or folder per line, e.g.&#10;D:\\Claims\\DELL-12345\\Logs&#10;D:\\Claims\\DELL-12345\\System.evtx"></textarea>
       </div>
       <div class="row" style="margin-top:12px">
         <button class="btn" id="pickFolder">${ICON.folder} Browse folder</button>
         <button class="btn" id="pickFiles">${ICON.file} Browse files</button>
-        <input type="text" id="caseName" placeholder="Case name (optional)" style="width:220px">
+        <input type="text" id="caseName" placeholder="Case name (optional)" autocomplete="off" style="width:220px">
         <div class="spacer"></div>
         <button class="btn ghost" id="demoBtn">${ICON.flask} Try demo data</button>
         <button class="btn primary" id="analyzeBtn">${ICON.play} Analyze</button>
@@ -132,6 +197,7 @@ function renderHome() {
       <details class="adv"><summary>Analysis settings</summary>
         <div class="settings">
           <label>Drive window before power-off &amp; after boot (seconds)<input type="number" id="s_drive" value="${st.drive_window_s ?? 60}" min="5"></label>
+          <label>Software trigger window before power-off (seconds)<input type="number" id="s_sw" value="${st.software_window_s ?? 900}" min="60"></label>
           <label>Restart if stop → boot gap below (seconds)<input type="number" id="s_restart" value="${st.restart_gap_s ?? 300}" min="10"></label>
           <label>Flag for review below confidence<input type="number" id="s_review" value="${st.review_threshold ?? 0.6}" step="0.05" min="0" max="1"></label>
           <label>Flag quiet gaps longer than (seconds)<input type="number" id="s_gap" value="${st.unexplained_gap_s ?? 7200}" min="600"></label>
@@ -142,7 +208,7 @@ function renderHome() {
     <div class="steps">
       ${[["Merge", "All logs become one timeline in UTC, with coverage and gap checks per log."],
          ["Classify", "Each boot closes a session: clean stop, hard shutdown or undetermined — from redundant evidence."],
-         ["Correlate", "Every Storport, disk, NVMe and PCIe event in the minute before power-off and after boot — did the drive cause it?"],
+         ["Correlate", "Storport, disk, NVMe and PCIe events around every power cycle, tied to the drive they belong to — and the app crashes, updates and installs that led up to it."],
          ["Review", "Confidence per verdict, missing evidence listed, uncertain items flagged."]]
         .map(([b, s], i) => `<div class="card step"><div class="n">${i + 1}</div><b>${b}</b><span>${s}</span></div>`).join("")}
     </div>
@@ -155,7 +221,7 @@ function renderHome() {
 }
 function readSettings() {
   const n = (id) => parseFloat($(id)?.value);
-  const o = { drive_window_s: n("#s_drive"), restart_gap_s: n("#s_restart"), review_threshold: n("#s_review"), unexplained_gap_s: n("#s_gap") };
+  const o = { drive_window_s: n("#s_drive"), software_window_s: n("#s_sw"), restart_gap_s: n("#s_restart"), review_threshold: n("#s_review"), unexplained_gap_s: n("#s_gap") };
   Object.keys(o).forEach((k) => Number.isNaN(o[k]) && delete o[k]);
   return o;
 }
@@ -176,12 +242,11 @@ async function analyze(demo) {
   const btn = demo ? $("#demoBtn") : $("#analyzeBtn"); btn.disabled = true;
   const old = btn.innerHTML; btn.innerHTML = '<span class="spin" style="width:15px;height:15px;border-width:2px"></span> Analyzing…';
   try {
-    if (!demo) store.set("paths", $("#paths").value);
     const body = { paths, name: $("#caseName").value.trim() || undefined, settings: readSettings() };
     const r = await api(demo ? "/api/demo" : "/api/analyze", { method: "POST", body: JSON.stringify(body) });
-    S.c = r; S.tab = "overview"; S.filter = "all"; S.q = ""; S.tl = null;
+    S.c = r; S.tab = "overview"; S.filter = "all"; S.v = {}; S.tl = null;
     await loadCases(); renderCase();
-    toast(`Analyzed ${r.event_count.toLocaleString()} events in ${r.analysis_seconds}s`);
+    toast(`Analyzed ${r.event_count.toLocaleString()} events in ${r.analysis_seconds}s${r.skipped_files ? ` · ${r.skipped_files} other logs skipped` : ""}`);
   } catch (e) { showErr(e.message); }
   finally { btn.disabled = false; btn.innerHTML = old; }
 }
@@ -189,7 +254,7 @@ async function analyze(demo) {
 /* ------------------------------------------------------------------ case view */
 async function openCase(id) {
   $("#main").innerHTML = '<div class="loading"><div class="spin"></div>Loading case…</div>';
-  try { S.c = await api(`/api/cases/${encodeURIComponent(id)}`); S.tab = "overview"; S.filter = "all"; S.q = ""; S.tl = null; renderCase(); loadCases(); }
+  try { S.c = await api(`/api/cases/${encodeURIComponent(id)}`); S.tab = "overview"; S.filter = "all"; S.v = {}; S.tl = null; renderCase(); loadCases(); }
   catch (e) { toast(e.message); renderHome(); }
 }
 function renderCase() {
@@ -198,7 +263,8 @@ function renderCase() {
   const dq = integ.missing_channels.length + integ.record_gaps.length + integ.clears.length + integ.time_changes.length +
     integ.unreadable_files.length + integ.clock_backwards.length;
   const tabs = [["overview", "Overview"], ["timeline", "Timeline"], ["cycles", "Power cycles", c.items.length],
-    ["drive", "Drive", c.storage_events.length], ["quality", "Data quality", dq, dq > 0], ["smart", "SMART check"]];
+    ["drive", "Drive", c.storage_events.length], ["software", "Apps & updates", n.software_events],
+    ["quality", "Data quality", dq, dq > 0]];
   $("#main").innerHTML = `
     <div class="case-head">
       <div><h1>${esc(c.case_name)}</h1>
@@ -227,7 +293,7 @@ function renderCase() {
     if (!del.dataset.armed) { del.dataset.armed = "1"; del.innerHTML = `${ICON.trash} Confirm delete`; setTimeout(() => { if (del.isConnected) { delete del.dataset.armed; del.innerHTML = ICON.trash; } }, 3000); return; }
     await api(`/api/cases/${encodeURIComponent(c.id)}`, { method: "DELETE" }); toast("Case deleted"); renderHome();
   };
-  ({ overview: tabOverview, timeline: tabTimeline, cycles: tabCycles, drive: tabDrive, quality: tabQuality, smart: tabSmart })[S.tab]();
+  ({ overview: tabOverview, timeline: tabTimeline, cycles: tabCycles, drive: tabDrive, software: tabSoftware, quality: tabQuality })[S.tab]();
 }
 
 /* ------------------------------------------------------------------ overview */
@@ -251,6 +317,12 @@ function tabOverview() {
   const maxSt = Math.max(1, ...st.map((x) => x[1]));
   const suspects = c.items.filter(isSuspect).slice(0, 6);
   const dstats = [["likely", "Likely", "drive"], ["possible", "Possibly", "drive"], ["no_evidence", "No drive evidence"], ["unknown", "Can't tell"]];
+  const sb = Object.entries(c.software_breakdown || {}).sort((a, b) => b[1] - a[1]);
+  const maxSb = Math.max(1, ...sb.map((x) => x[1]));
+  const swc = Object.entries(c.software_counts || {}).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const maxSw = Math.max(1, ...swc.map((x) => x[1]));
+  const disk = c.disks.find((d) => d.highlight) || c.disks[0];
+  const rerun = '<div class="muted">Re-run the analysis to get this for the case.</div>';
   $("#tabBody").innerHTML = `
     <div class="tiles">${tiles.map(([k, v, l, s]) => `
       <div class="card tile" data-f="${k}" style="--c:${colors[k] || TYPES[k].color}">
@@ -259,16 +331,20 @@ function tabOverview() {
       <div class="card span2"><div class="card-h"><h3>Did the drive cause it?</h3><span class="muted small">hard shutdowns &amp; undetermined · drive checked ${esc(c.settings.drive_window_s)}s before power-off and after boot</span></div>
         <div class="card-b">${n.drive_likely === undefined ? '<div class="muted">Re-run the analysis to get the drive assessment for this case.</div>' : `
           <div class="dstats">${dstats.map(([k, l, f]) => `<div class="dstat ${k}" ${f ? `data-f="${f}"` : ""}><b>${n["drive_" + k]}</b><span>${l}</span></div>`).join("")}
-            <div class="dstat effect" data-f="effect"><b>${n.drive_effect}</b><span>drive errors right after boot / wake</span></div></div>
+            <div class="dstat effect" data-f="effect"><b>${n.drive_effect}</b><span>drive errors right after boot / wake</span></div>
+            ${n.hl_cycles !== undefined ? `<div class="dstat hl" data-f="samsung" title="${n.hl_suspect} of them with the drive suspected"><b>${n.hl_cycles}</b><span>with ${esc(HV())} drive problems</span></div>` : ""}</div>
           <div class="muted small" style="margin:2px 0 6px">“No drive evidence” is not proof the drive is fine — a drive that froze suddenly may not have been able to save its last events. Cross-check its SMART and error logs.</div>
           ${suspects.length ? suspects.map((it) => `
             <div class="list-row" data-id="${it.id}">${chip(it.type)}<div style="flex:1;min-width:0"><div class="lt">${esc(it.id)} · ${esc(it.subtype)}</div>
-              <div class="muted small">${fmt(it.time)} · ${esc(it.drive.reasons[0] || "")}</div></div>${causeChip(it.drive)}</div>`).join("")
+              <div class="muted small">${fmt(it.time)} · ${esc(it.drive.reasons[0] || "")}</div></div><span class="chips">${hlChip(it.drive)}${causeChip(it.drive)}</span></div>`).join("")
             : '<div class="muted" style="padding-top:8px">No power cycle points at the drive.</div>'}`}
         </div></div>
       <div class="card"><div class="card-h"><h3>Hard shutdown causes</h3><span class="muted small">${n.hard} total</span></div>
         <div class="card-b">${hb.length ? hb.map(([k, v]) => `<div class="hbar"><span>${esc(k)}</span><div class="track"><b style="width:${(v / maxHb) * 100}%;background:var(--bad)"></b></div><span class="n">${v}</span></div>`).join("")
           : '<div class="muted">No hard shutdowns found.</div>'}</div></div>
+      <div class="card"><div class="card-h"><h3>What triggered it?</h3><span class="muted small">${n.software === undefined ? "" : `${n.software} triggered by software, not the user`}</span></div>
+        <div class="card-b">${c.software_breakdown === undefined ? rerun : sb.length ? sb.map(([k, v]) => `<div class="hbar trig" data-sw="${esc(k)}" title="Show these power cycles"><span>${esc(swLabel(k))}</span><div class="track"><b style="width:${(v / maxSb) * 100}%;background:${["none", "unknown", "not_logged"].includes(k) ? "var(--grey)" : k === "user" ? "var(--ok)" : "var(--accent)"}"></b></div><span class="n">${v}</span></div>`).join("")
+          : '<div class="muted">No power cycles found.</div>'}</div></div>
       <div class="card"><div class="card-h"><h3>Needs review</h3><span class="muted small">${n.needs_review} item(s)</span></div>
         <div class="card-b" style="padding-top:6px;padding-bottom:6px">${review.length ? review.map((it) => `
           <div class="list-row" data-id="${it.id}">${chip(it.type)}<div style="flex:1;min-width:0"><div class="lt">${esc(it.subtype)}</div>
@@ -284,10 +360,15 @@ function tabOverview() {
       <div class="card"><div class="card-h"><h3>Storage events</h3><span class="muted small">${c.storage_events.length} warning/error events</span></div>
         <div class="card-b">${st.length ? st.map(([k, v]) => `<div class="hbar"><span>${esc(k)}</span><div class="track"><b style="width:${(v / maxSt) * 100}%;background:var(--warn)"></b></div><span class="n">${v}</span></div>`).join("")
           : '<div class="muted">No storage warnings or errors logged.</div>'}
-          ${c.disks.length ? `<div class="muted small" style="margin-top:12px">Drive: <b style="color:var(--ink)">${esc(c.disks[0].Model || "")}</b> · FW ${esc(c.disks[0].Revision || c.disks[0].FirmwareRevision || "?")} · SN ${esc(c.disks[0].SerialNumber || "?")}</div>` : ""}
+          ${n.hl_events !== undefined && c.storage_events.length ? `<div class="muted small" style="margin-top:10px"><span class="chip sam">${esc(HV())}</span> ${n.hl_events} of ${c.storage_events.length} warning / error events are on the ${esc(HV())} drive</div>` : ""}
+          ${disk ? `<div class="muted small" style="margin-top:12px">Drive: <b style="color:var(--ink)">${esc(disk.Model || "")}</b>${disk.highlight ? ` <span class="chip sam">${esc(HV())}</span>` : ""} · FW ${esc(disk.Revision || disk.FirmwareRevision || "?")} · SN ${esc(disk.SerialNumber || "?")}${c.disks.length > 1 ? ` · +${c.disks.length - 1} more` : ""}</div>` : ""}
         </div></div>
+      <div class="card"><div class="card-h"><h3>Apps &amp; updates</h3><span class="muted small">${n.software_events === undefined ? "" : `${n.software_events} crash / hang / failure / restart events`}</span></div>
+        <div class="card-b">${c.software_counts === undefined ? rerun : swc.length ? swc.map(([k, v]) => `<div class="hbar"><span>${esc(k)}</span><div class="track"><b style="width:${(v / maxSw) * 100}%;background:var(--purple)"></b></div><span class="n">${v}</span></div>`).join("")
+          : `<div class="muted">No app crashes or hangs, failed updates or service failures logged${(c.channels || []).some((ch) => ch.kind === "application") ? "" : " (no Application log in this case)"}.</div>`}</div></div>
     </div>`;
   $$(".tile, .dstat[data-f]").forEach((t) => (t.onclick = () => { S.filter = t.dataset.f; S.tab = "cycles"; renderCase(); }));
+  $$(".hbar.trig").forEach((t) => (t.onclick = () => { S.filter = "sw:" + t.dataset.sw; S.tab = "cycles"; renderCase(); }));
   $$(".list-row").forEach((r) => (r.onclick = () => openDetail(r.dataset.id)));
 }
 function subOf(type) {
@@ -296,19 +377,27 @@ function subOf(type) {
   return Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(" · ");
 }
 function shortChan(ch) {
-  return ch.replace("Microsoft-Windows-", "").replace("Storage-Storport/Operational", "Storport").replace("/Diagnostic", " (diag)");
+  return ch.replace("Microsoft-Windows-", "").replace("Storage-Storport/Operational", "Storport").replace("Storage-Storport/Health", "Storport health")
+    .replace("/Diagnostic", " (diag)");
 }
 
 /* ------------------------------------------------------------------ power cycles */
+const winEvents = (x) => [...(x?.before?.events || []), ...(x?.after?.events || [])];
 function filtered() {
-  const q = S.q.toLowerCase();
+  const m = matcher(S.v.cyQ);
+  const sw = S.filter.startsWith("sw:") ? S.filter.slice(3) : null;
   return S.c.items.filter((it) => {
     if (S.filter === "review" && !it.needs_review) return false;
     if (S.filter === "drive" && !isSuspect(it)) return false;
     if (S.filter === "effect" && !hitAfter(it)) return false;
-    if (!["all", "review", "drive", "effect"].includes(S.filter) && it.type !== S.filter) return false;
-    if (!q) return true;
-    return `${it.id} ${it.type} ${it.subtype} ${it.drive?.state} ${it.drive?.cause_label ?? ""} ${it.drive?.effect_label ?? ""} ${it.flags.map((f) => f.text).join(" ")} ${it.evidence_found.map((e) => e.eid).join(" ")}`.toLowerCase().includes(q);
+    if (S.filter === "samsung" && !hlCycle(it)) return false;
+    if (S.filter === "software" && !isSoftware(it)) return false;
+    if (sw !== null && (it.type === "sleep" || it.software?.trigger !== sw)) return false;
+    if (sw === null && !["all", "review", "drive", "effect", "samsung", "software"].includes(S.filter) && it.type !== S.filter) return false;
+    if (!m) return true;
+    const s = it.software || {};
+    return m([...it.evidence_found, ...winEvents(it.drive), ...winEvents(s)].map((e) => e.eid),
+      `${it.id} ${it.type} ${it.subtype} ${it.drive?.state} ${it.drive?.cause_label ?? ""} ${it.drive?.effect_label ?? ""} ${it.drive?.highlight_label ?? ""} ${s.label ?? ""} ${s.initiator?.process ?? ""} ${(s.reasons || []).join(" ")} ${it.flags.map((f) => f.text).join(" ")}`);
   });
 }
 function tabCycles() {
@@ -317,30 +406,33 @@ function tabCycles() {
     ["hard", "Hard", n.hard], ["sleep", "Sleep", n.sleep + n.hibernate + n.modern_standby], ["unknown", "Undetermined", n.unknown],
     ["review", "Needs review", n.needs_review], ["drive", "Drive suspected", (n.drive_likely ?? 0) + (n.drive_possible ?? 0)],
     ["effect", "Drive errors after", n.drive_effect ?? 0]];
+  if (n.hl_cycles !== undefined) f.push(["samsung", `${HV()} drive`, n.hl_cycles], ["software", "Triggered by software", n.software]);
+  if (S.filter.startsWith("sw:")) f.push([S.filter, `Trigger: ${swLabel(S.filter.slice(3))}`, (S.c.software_breakdown || {})[S.filter.slice(3)] || 0]);
   $("#tabBody").innerHTML = `
     <div class="row" style="margin-bottom:12px">
       ${f.map(([k, l, c]) => `<button class="fchip ${S.filter === k ? "on" : ""}" data-f="${k}">${l}<span class="badge">${c}</span></button>`).join("")}
-      <div class="spacer"></div>
-      <input type="search" id="q" placeholder="Search detail, flags, event ID…" value="${esc(S.q)}" style="width:250px">
+      <div class="spacer"></div>${searchBox("cyQ")}
     </div>
     <div class="card"><div class="tbl-wrap" style="max-height:calc(100vh - 290px)"><table class="t" id="cyc"></table></div></div>`;
   $$(".fchip").forEach((b) => (b.onclick = () => { S.filter = b.dataset.f; tabCycles(); }));
-  const q = $("#q"); q.oninput = () => { S.q = q.value; drawCycleRows(); };
+  bind(["cyQ"], drawCycleRows);
   drawCycleRows();
 }
 function drawCycleRows() {
   const rows = filtered();
   const el = $("#cyc");
   if (!rows.length) { el.innerHTML = '<tr><td class="empty">Nothing matches this filter.</td></tr>'; return; }
-  el.innerHTML = `<thead><tr><th>ID</th><th>Time (${tzLabel()})</th><th>Type</th><th>Detail</th><th>Off / asleep</th><th>Confidence</th><th>Drive</th><th>Drive caused it?</th><th>Flags</th></tr></thead><tbody>
+  el.innerHTML = `<thead><tr><th>ID</th><th>Time (${tzLabel()})</th><th>Type</th><th>Detail</th><th>Off / asleep</th><th>Confidence</th><th>Drive</th><th>Drive caused it?</th><th>Software trigger</th><th>Flags</th></tr></thead><tbody>
     ${rows.map((it) => {
       const warn = it.flags.filter((x) => x.severity === "warn").length;
-      return `<tr class="click ${S.selected === it.id ? "sel" : ""}" data-id="${it.id}">
+      const hl = isHl(it.drive?.highlight) ? hlChip({ ...it.drive, highlight_label: it.drive.highlight === "yes" ? HV() : `${HV()}?` }) : "";
+      return `<tr class="click ${S.selected === it.id ? "sel" : ""} ${hl ? "samrow" : ""}" data-id="${it.id}">
         <td class="mono">${it.id}</td><td style="white-space:nowrap">${fmt(it.time)}</td><td>${chip(it.type)}</td>
         <td>${esc(it.subtype)}${it.wake_source ? `<div class="muted small">wake: ${esc(it.wake_source)}</div>` : ""}</td>
         <td style="white-space:nowrap">${esc(it.type === "sleep" ? it.duration : it.gap)}</td>
-        <td>${confBar(it.confidence)}</td><td>${stateChip(it.drive?.state)}</td>
+        <td>${confBar(it.confidence)}</td><td><span class="chips">${stateChip(it.drive?.state)}${hl}</span></td>
         <td>${it.type === "sleep" ? '<span class="muted">—</span>' : causeChip(it.drive)}</td>
+        <td>${it.type === "sleep" || !it.software ? '<span class="muted">—</span>' : `${swChip(it.software)}${SW_CLS[it.software.strength] ? `<div class="muted small">${esc(it.software.strength_label + swConf(it.software))}</div>` : ""}`}</td>
         <td>${warn ? `<span class="flagdot">${ICON.warn}${warn}</span>` : it.flags.length ? `<span class="muted small">${it.flags.length} note${it.flags.length > 1 ? "s" : ""}</span>` : ""}</td></tr>`;
     }).join("")}</tbody>`;
   $$("tr.click", el).forEach((r) => (r.onclick = () => openDetail(r.dataset.id)));
@@ -355,6 +447,20 @@ function closeDrawer() {
   $("#drawer").classList.remove("open"); $("#drawer").setAttribute("aria-hidden", "true"); $("#drawerBack").classList.remove("open");
   S.selected = null; $$("#cyc tr.sel").forEach((r) => r.classList.remove("sel"));
 }
+/* one event in a before / after list; a click shows its data */
+const evRow = (e, body, chips, cls = "") => `<div class="wrow ${e.state === "info" ? "info" : cls}" data-idx="${e.idx}" title="Click for the full event data">
+    <span class="off mono" title="${fmt(e.time)}">${fmtOff(e.offset_s) || fmt(e.time).slice(11)}</span><span class="mono"><b>${e.eid}</b></span>
+    <div class="wx"><div>${esc(e.label)} <span class="muted">· ${esc(e.provider.replace("Microsoft-Windows-", ""))}</span></div>${body}</div>
+    <span class="chips">${chips}</span></div><pre class="data" hidden></pre>`;
+const driveRow = (e) => evRow(e, (e.fields ? `<div class="wf mono">${esc(e.fields)}</div>` : "") + devLine(e), devBadge(e) + stateChip(e.state), isHl(e.hl) ? "sam" : "");
+const swRow = (e) => evRow(e, e.subject || e.detail ? `<div class="wf">${esc([e.subject, e.detail].filter(Boolean).join(" · "))}</div>` : "", stateChip(e.state));
+const rowText = (e) => `${e.label} ${e.provider} ${e.subject || ""} ${e.detail || ""} ${e.fields || ""} ${e.dev || ""}`;
+/* where an app / update list starts (on) or ends: the power cycle before / after it, or the end of the log */
+function edge(id, on) {
+  const x = id && S.c.items.find((i) => i.id === id);
+  if (!x) return on ? "the start of the log" : "the end of the log";
+  return `${cycLink(x, x.id)} ${x.type === "sleep" ? (on ? "wake" : "sleep") : on ? "boot" : "power-off"}`;
+}
 function openDetail(id) {
   const it = S.c.items.find((x) => x.id === id); if (!it) return;
   S.selected = id; $$("#cyc tr").forEach((r) => r.classList.toggle("sel", r.dataset.id === id));
@@ -364,33 +470,52 @@ function openDetail(id) {
     : [["Last sign of life", fmt(it.last_alive)], ["Clean stop logged", it.stop_time ? fmt(it.stop_time) : "—"], ["Next boot", fmt(it.boot_time)],
        ["Off for", it.gap], ["Boot type", it.boot_type || "not logged"]];
   const nFound = new Set(it.evidence_found.map((e) => e.signal)).size;
-  const win = (w, label, from) => !w ? "" : `<div class="win"><div class="win-h"><span><b>${label}</b> · ${fmt(w.from)} → ${fmt(w.to)}</span>${stateChip(w.state)}</div>
-      ${w.events.length ? `<div class="wev">${w.events.map((e) => `
-        <div class="wrow ${e.state === "info" ? "info" : ""}" data-idx="${e.idx}" title="Click for the full event data">
-          <span class="off mono">${fmtOff(e.offset_s) || fmt(e.time).slice(11)}</span><span class="mono"><b>${e.eid}</b></span>
-          <div class="wx"><div>${esc(e.label)} <span class="muted">· ${esc(e.provider.replace("Microsoft-Windows-", ""))}</span></div>${e.fields ? `<div class="wf mono">${esc(e.fields)}</div>` : ""}</div>
-          ${stateChip(e.state)}</div><pre class="data" style="display:none"></pre>`).join("")}</div>
-        ${w.total > w.events.length ? `<div class="muted small">Showing the first ${w.events.length} of ${w.total} events.</div>` : ""}`
-        : `<div class="muted small">${w.state === "no data" ? "No log covers this window." : "No drive events in this window."}</div>`}
-      <div class="muted small" style="margin-top:4px">Offsets from the ${from}${w.storport_covered ? "" : " · Storport log not available for this time"}</div></div>`;
-  const d = it.drive || {};
+  const [offL, onL] = isSleep ? ["Before sleep", "After wake"] : ["Before power-off", "After boot"];
+  /* before / after lists: scroll boxes that open at the end nearest the power cycle - "before" at the bottom, "after" at the top */
+  const wins = [];
+  const win = (w, o) => {
+    const i = wins.push({ w, ...o }) - 1;
+    return `<div class="win"><div class="win-h"><span title="${esc(`${fmt(w.from)} → ${fmt(w.to)}`)}"><b>${o.label}</b> · ${o.span}</span>
+      <span class="chips"><span class="muted small" data-n="${i}"></span>${o.chip || ""}</span></div>
+      <div class="wev" data-w="${i}"></div>${o.note ? `<div class="muted small wnote">${o.note}</div>` : ""}</div>`;
+  };
+  const d = it.drive || {}, dw = d.window_s ?? S.c.settings.drive_window_s;
+  const driveWin = (w, before) => !w ? "" : win(w, { before, row: driveRow, label: before ? offL : onL, span: `${before ? "last" : "first"} ${dw} s`,
+    chip: stateChip(w.state), empty: w.state === "no data" ? "No log covers this window." : "No drive events in this window.",
+    note: [!w.storport_covered && "Storport log not available for this time", w.total > w.events.length && `Showing the first ${w.events.length} of ${w.total}`].filter(Boolean).join(" · ") });
+  const swWin = (w, before) => !w ? "" : win(w, { before, sw: true, row: swRow, label: before ? offL : onL,
+    span: !("since" in w || "until" in w) ? `${fmt(w.from)} → ${fmt(w.to)}`   /* analysed before the lists ran cycle to cycle */
+      : `${before ? `since ${edge(w.since, true)}` : `until ${edge(w.until, false)}`} · ${fmtDur(before ? tsOf(w.anchor) - tsOf(w.from) : tsOf(w.to) - tsOf(w.anchor))}`,
+    empty: "No app, update or service events in this window.", note: w.app_covered ? "" : "No Application log for this time" });
   const driveSec = `<div class="sec"><h4>Drive at this ${isSleep ? "sleep" : "power cycle"}</h4>
       ${d.cause ? `<div class="assess">
         ${isSleep ? "" : `<div class="a-row"><span>Did the drive cause it?</span>${causeChip(d)}</div>`}
         <div class="a-row"><span>Effect on the drive</span>${effectChip(d)}</div>
+        ${d.highlight ? `<div class="a-row"><span>Which drive had the problems?</span>${hlChip(d) || '<span class="chip healthy">No drive problems</span>'}</div>` : ""}
         <ul class="reasons">${d.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>`
         : '<div class="note" style="margin-bottom:10px">Re-run the analysis to get the drive assessment for this case.</div>'}
-      ${win(d.before, isSleep ? "Before sleep" : "Before power-off", isSleep ? "sleep entry" : "last logged event")}
-      ${win(d.after, isSleep ? "After wake" : "After boot", isSleep ? "wake" : "boot")}</div>`;
+      ${driveWin(d.before, true)}${driveWin(d.after, false)}</div>`;
+  const sw = it.software, init = sw?.initiator;
+  const initKv = init ? [["Requested by", init.process || "—"], ["Path", init.path], ["Reason", init.reason_text],
+    ["Type", init.type], ["On behalf of", init.user], ["Comment", init.comment], ["Logged at", fmt(init.time)]].filter(([, v]) => v) : [];
+  const swSec = `<div class="sec"><h4>Apps, updates &amp; services</h4>
+      ${sw ? `<div class="assess">
+        ${isSleep ? "" : `<div class="a-row"><span>What triggered it?</span><span class="chips">${swChip(sw)}<span class="muted small" style="font-weight:400">${esc(sw.strength_label + swConf(sw))}</span></span></div>`}
+        ${initKv.length ? `<dl class="kv" style="margin:8px 0 4px">${initKv.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : ""}
+        <ul class="reasons">${sw.reasons.filter((r) => !(initKv.length && /^(Reason given|Comment): /.test(r))).map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>
+        ${swWin(sw.before, true)}${swWin(sw.after, false)}`
+        : '<div class="note">Re-run the analysis to see the app, update and service events for this case.</div>'}</div>`;
   const anchor = (it.evidence_found[it.evidence_found.length - 1] || it.evidence_found[0])?.idx;
   openDrawer(`
-    <div class="dr-h"><div style="flex:1">
+    <div class="dr-h"><div style="flex:1;min-width:0">
         <div class="row" style="gap:6px">${chip(it.type, TYPES[it.type].label)}${it.needs_review ? chip("review", "Needs review") : ""}<span class="muted small mono">${it.id}</span></div>
         <h2>${esc(it.subtype)}</h2><div class="muted small">${fmt(it.time)} ${tzLabel()}</div></div>
+      ${wins.length ? searchBox("drQ", "dr-q") : ""}
       <button class="icon-btn dr-close" aria-label="Close">${ICON.x}</button></div>
     <div class="dr-b">
       <div class="sec"><dl class="kv">${kv.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl></div>
       ${driveSec}
+      ${swSec}
       <div class="sec"><h4>Confidence</h4>
         <div class="bigconf"><strong style="color:${confColor(it.confidence)}">${Math.round(it.confidence * 100)}%</strong>
           <div class="bar"><b style="width:${it.confidence * 100}%;background:${confColor(it.confidence)}"></b></div></div>
@@ -402,17 +527,51 @@ function openDetail(id) {
         ${it.evidence_missing.map((m) => `<div class="evi miss"><span class="id">—</span><div class="x"><b>${esc(m)}</b><div>expected, not logged</div></div></div>`).join("")}</div>
       <div class="sec"><h4>Raw events</h4><div id="rawBox"><button class="btn" id="rawBtn" data-idx="${anchor ?? ""}">${ICON.list} Show events around this point</button></div></div>
     </div>`);
-  $$(".wrow").forEach((r) => r.addEventListener("click", async () => {
-    const box = r.nextElementSibling;
-    if (box.style.display !== "none") { box.style.display = "none"; return; }
-    box.style.display = "";
-    if (box.textContent) return;
+  const drawer = $("#drawer"), cid = S.c.id, boxes = wins.map((_, i) => $(`.wev[data-w="${i}"]`, drawer));
+  let q = "";
+  const fill = (i, keep = false) => {   // keep: stay on the same rows after more were loaded
+    const o = wins[i], box = boxes[i]; if (!box.isConnected) return;
+    const m = matcher(q), all = o.w.events, rows = m ? all.filter((e) => m([e.eid], rowText(e))) : all;
+    const rest = o.sw && !m ? o.w.total - all.length : 0;
+    const end = rest <= 0 ? "" : o.w.loaded ? `<div class="muted small wend">Showing the ${all.length.toLocaleString()} nearest of ${o.w.total.toLocaleString()}</div>`
+      : `<button class="wmore" data-more="${i}">Show ${rest.toLocaleString()} ${o.before ? "earlier" : "later"} event${rest > 1 ? "s" : ""}</button>`;
+    const list = rows.length ? rows.map(o.row).join("") : end ? "" : `<div class="muted small wend">${m ? "No match." : o.empty}</div>`;
+    const fromEnd = box.scrollHeight - box.scrollTop, top = box.scrollTop;
+    box.innerHTML = o.before ? end + list : list + end;
+    box.scrollTop = o.before ? box.scrollHeight - (keep ? fromEnd : 0) : keep ? top : 0;
+    $(`[data-n="${i}"]`, drawer).textContent = m ? `${rows.length} of ${all.length}` : o.w.total ? `${o.w.total.toLocaleString()} event${o.w.total > 1 ? "s" : ""}` : "";
+  };
+  const loadAll = async (i) => {   // the whole stretch, not just the events nearest the power cycle
+    const o = wins[i], w = o.w;
+    if (!o.sw || w.loaded || w.events.length >= w.total) return;
+    const evs = await api(`/api/cases/${encodeURIComponent(cid)}/events?tag=software&limit=5000${o.before ? "&last=1" : ""}&from=${encodeURIComponent(w.from)}&to=${encodeURIComponent(w.to)}`);
+    const a = tsOf(w.anchor);
+    w.events = evs.map((e) => ({ ...e, offset_s: Math.round((tsOf(e.time) - a) * 10) / 10 }));
+    w.loaded = true;
+  };
+  wins.forEach((_, i) => fill(i));
+  $("#drQ")?.addEventListener("input", debounce(async (ev) => {
+    q = ev.target.value;
+    if (matcher(q)) await Promise.all(wins.map((_, i) => loadAll(i).catch(() => { /* search what is loaded */ })));
+    wins.forEach((_, i) => fill(i));
+  }));
+  $(".dr-b", drawer).addEventListener("click", async (ev) => {
+    const more = ev.target.closest("[data-more]");
+    if (more) {
+      more.disabled = true; more.textContent = "Loading…";
+      try { await loadAll(+more.dataset.more); fill(+more.dataset.more, true); } catch (e) { more.textContent = e.message; }
+      return;
+    }
+    const a = ev.target.closest("a.cyc"); if (a) return openDetail(a.dataset.id);
+    const r = ev.target.closest(".wrow"); if (!r) return;
+    const box = r.nextElementSibling; box.hidden = !box.hidden;
+    if (box.hidden || box.textContent) return;
     box.textContent = "Loading…";
     try {
-      const [e] = await api(`/api/cases/${encodeURIComponent(S.c.id)}/events?around=${r.dataset.idx}&n=0`);
+      const [e] = await api(`/api/cases/${encodeURIComponent(cid)}/events?around=${r.dataset.idx}&n=0`);
       box.textContent = JSON.stringify(e?.data ?? {}, null, 1);
     } catch (err) { box.textContent = err.message; }
-  }));
+  });
   $("#rawBtn")?.addEventListener("click", (e) => loadRaw(e.currentTarget.dataset.idx));
   $$(".ctx").forEach((b) => b.addEventListener("click", () => loadRaw(b.dataset.idx, true)));
 }
@@ -449,7 +608,9 @@ function tabTimeline() {
       <div class="legend">
         <span><i style="background:var(--accent);opacity:.35"></i>Powered on (boot session)</span>
         ${Object.entries(TYPES).map(([k, v]) => `<span><i style="background:${v.color}"></i>${v.label}</span>`).join("")}
-        <span><i style="background:var(--warn)"></i>Storage warning</span><span><i style="background:var(--bad)"></i>Storage error / reset</span>
+        <span><i style="background:var(--warn)"></i>Storage / app warning</span><span><i style="background:var(--bad)"></i>Storage error / reset, app crash</span>
+        <span><i style="background:var(--sam-soft);box-shadow:inset 0 0 0 1.5px var(--sam)"></i>${esc(HV())} drive lane</span>
+        <span><i style="background:var(--accent)"></i>Update / install / restart</span>
       </div></div></div>`;
   drawTimeline();
   const svg = $("#tlsvg");
@@ -476,8 +637,12 @@ function drawTimeline() {
   const svg = $("#tlsvg"), c = S.c; if (!svg) return;
   const W = svg.getBoundingClientRect().width || 900, LW = 150, R = 16;
   const chans = c.channels;
-  const lanes = [["Power state", 34], ["Transitions", 34], ["Sleep", 26], ["Drive events", 26], ...chans.map((ch) => [shortChan(ch.channel), 18])];
-  let y = 34; const ly = lanes.map(([n, h]) => { const o = { n, y, h }; y += h + 8; return o; });
+  const hasHl = c.storage_events.some((e) => isHl(e.hl));
+  const lanes = [["power", "Power state", 34], ["trans", "Transitions", 34], ["sleep", "Sleep", 26],
+    ...(hasHl ? [["hl", `${HV()} drive`, 26]] : []), ["drive", hasHl ? "Other storage" : "Drive events", 26],
+    ...(c.software_events ? [["sw", "Apps & updates", 26]] : []), ...chans.map((ch, i) => ["ch" + i, shortChan(ch.channel), 18])];
+  let y = 34; const ly = lanes.map(([k, n, h]) => { const o = { k, n, y, h }; y += h + 8; return o; });
+  const L = Object.fromEntries(ly.map((l) => [l.k, l]));
   const H = y + 6; svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.style.height = H + "px";
   const { t0, t1 } = S.tl, x = (t) => LW + ((t - t0) / (t1 - t0)) * (W - LW - R);
   const vis = (a, b) => b >= t0 && a <= t1;
@@ -492,19 +657,20 @@ function drawTimeline() {
     const lbl = step >= 86400 ? fmtTs(t, false).slice(5, 10) : step >= 3600 ? fmtTs(t, false).slice(5, 16) : fmtTs(t, false).slice(11, 16);
     out.push(`<text x="${xx + 3}" y="15" font-size="10.5" fill="var(--muted)">${lbl}</text>`);
   }
-  ly.forEach((l) => out.push(`<text x="10" y="${l.y + l.h / 2 + 4}" font-size="11.5" fill="var(--ink-2)" font-weight="${l.h > 20 ? 600 : 400}">${esc(l.n.length > 22 ? l.n.slice(0, 21) + "…" : l.n)}</text>`,
-    `<rect x="${LW}" y="${l.y}" width="${W - LW - R}" height="${l.h}" rx="5" fill="var(--panel-2)"/>`));
+  ly.forEach((l) => out.push(`<text x="10" y="${l.y + l.h / 2 + 4}" font-size="11.5" fill="${l.k === "hl" ? "var(--sam)" : "var(--ink-2)"}" font-weight="${l.h > 20 ? 600 : 400}">${esc(l.n.length > 22 ? l.n.slice(0, 21) + "…" : l.n)}</text>`,
+    l.k === "hl" ? `<rect x="${LW}" y="${l.y}" width="${W - LW - R}" height="${l.h}" rx="5" fill="var(--sam-soft)" stroke="var(--sam)" stroke-width="1"/>`
+      : `<rect x="${LW}" y="${l.y}" width="${W - LW - R}" height="${l.h}" rx="5" fill="var(--panel-2)"/>`));
   const clipX = (a, b) => [Math.max(LW, x(a)), Math.min(W - R, x(b))];
   // sessions
-  const L0 = ly[0];
+  const L0 = L.power;
   c.sessions.forEach((s) => {
     if (!vis(s.start_ts, s.end_ts)) return; const [a, b] = clipX(s.start_ts, s.end_ts);
     out.push(`<rect class="hit" data-tip="${esc(`<b>Boot session ${s.id}</b>${fmtTs(s.start_ts)} → ${fmtTs(s.end_ts)}<br>${s.boot_type || (s.partial_start ? "started before log" : "")}`)}" x="${a}" y="${L0.y + 6}" width="${Math.max(2, b - a)}" height="${L0.h - 12}" rx="4" fill="var(--accent)" opacity=".28"/>`);
   });
   // transitions
-  const L1 = ly[1], L2 = ly[2];
+  const L1 = L.trans, L2 = L.sleep;
   c.items.forEach((it) => {
-    const col = TYPES[it.type].color, tip = esc(`<b>${it.id} · ${TYPES[it.type].label}</b>${esc(it.subtype)}<br>${fmtTs(it.time_ts)} · ${Math.round(it.confidence * 100)}%${it.needs_review ? " · needs review" : ""}${isSuspect(it) ? `<br>Drive caused it? ${esc(it.drive.cause_label)}` : ""}`);
+    const col = TYPES[it.type].color, tip = esc(`<b>${it.id} · ${TYPES[it.type].label}</b>${esc(it.subtype)}<br>${fmtTs(it.time_ts)} · ${Math.round(it.confidence * 100)}%${it.needs_review ? " · needs review" : ""}${isSuspect(it) ? `<br>Drive caused it? ${esc(it.drive.cause_label)}` : ""}${hlCycle(it) ? ` · ${esc(it.drive.highlight_label)}` : ""}${it.software && it.type !== "sleep" && SW_CLS[it.software.strength] ? `<br>Trigger: ${esc(it.software.label)} (${esc(it.software.strength_label)})` : ""}`);
     if (it.type === "sleep") {
       const a = it.start_ts || it.end_ts, b = it.end_ts || it.start_ts; if (!vis(a, b)) return;
       const [xa, xb] = clipX(a, b);
@@ -518,16 +684,23 @@ function drawTimeline() {
     out.push(`<g class="hit mk" data-id="${it.id}" data-tip="${tip}" transform="translate(${x(a)},${cy})"><circle r="${it.needs_review ? 8 : 7}" fill="${col}" stroke="var(--panel)" stroke-width="2"/>
       ${it.needs_review ? '<circle r="11" fill="none" stroke="var(--warn)" stroke-width="1.5"/>' : ""}</g>`);
   });
-  // drive events
-  const L3 = ly[3];
+  // drive events: the highlighted vendor's drive on its own lane
   c.storage_events.forEach((e) => {
     const t = tsOf(e.time); if (!vis(t, t)) return;
-    const col = STATE_COLOR[e.state] || "var(--warn)";
-    out.push(`<rect class="hit ctxe" data-idx="${e.idx}" data-tip="${esc(`<b>${e.eid} · ${esc(e.label)}</b>${esc(e.provider)}<br>${fmt(e.time)}`)}" x="${x(t) - 2}" y="${L3.y + 4}" width="4" height="${L3.h - 8}" rx="1.5" fill="${col}"/>`);
+    const col = STATE_COLOR[e.state] || "var(--warn)", l = isHl(e.hl) ? L.hl : L.drive;
+    const who = e.dev_basis !== undefined ? `<br>${esc(e.dev || "drive not identified")}${e.hl === "probably" ? " (probably)" : ""}` : "";
+    out.push(`<rect class="hit ctxe" data-idx="${e.idx}" data-tip="${esc(`<b>${e.eid} · ${esc(e.label)}</b>${esc(e.provider)}<br>${fmt(e.time)}${who}`)}" x="${x(t) - 2}" y="${l.y + 4}" width="4" height="${l.h - 8}" rx="1.5" fill="${col}" ${e.hl === "probably" ? 'opacity=".6"' : ""}/>`);
+  });
+  // apps & updates: problems and restart-related events
+  if (L.sw) c.software_events.forEach((e) => {
+    if (e.state === "info" && !["restart", "reboot"].includes(e.kind)) return;
+    const t = tsOf(e.time); if (!vis(t, t)) return;
+    const col = e.state === "error" ? "var(--bad)" : ["restart", "reboot"].includes(e.kind) ? "var(--accent)" : "var(--warn)";
+    out.push(`<rect class="hit ctxe" data-idx="${e.idx}" data-tip="${esc(`<b>${e.eid} · ${esc(e.label)}</b>${esc(e.subject || e.provider)}<br>${fmt(e.time)}`)}" x="${x(t) - 2}" y="${L.sw.y + 4}" width="4" height="${L.sw.h - 8}" rx="1.5" fill="${col}"/>`);
   });
   // coverage
   chans.forEach((ch, i) => {
-    const l = ly[4 + i]; if (!vis(ch.start_ts, ch.end_ts)) return; const [a, b] = clipX(ch.start_ts, ch.end_ts);
+    const l = L["ch" + i]; if (!vis(ch.start_ts, ch.end_ts)) return; const [a, b] = clipX(ch.start_ts, ch.end_ts);
     const col = ch.kind === "storport" ? "var(--purple)" : ch.kind === "application" ? "var(--ok)" : ch.kind === "system" ? "var(--accent)" : "var(--grey)";
     out.push(`<rect x="${a}" y="${l.y + 5}" width="${Math.max(2, b - a)}" height="${l.h - 10}" rx="3" fill="${col}" opacity=".55"/>`);
   });
@@ -542,42 +715,77 @@ function drawTimeline() {
     n.addEventListener("mouseleave", () => (tt.style.opacity = 0));
   });
   $$(".mk", svg).forEach((n) => n.addEventListener("click", (e) => { e.stopPropagation(); tt.style.opacity = 0; openDetail(n.dataset.id); }));
-  $$(".ctxe", svg).forEach((n) => n.addEventListener("click", () => { tt.style.opacity = 0; openContext(n.dataset.idx, "Storage event"); }));
+  $$(".ctxe", svg).forEach((n) => n.addEventListener("click", () => { tt.style.opacity = 0; openContext(n.dataset.idx, "Event in context"); }));
   $$(".mk,.ctxe", svg).forEach((n) => n.addEventListener("mousedown", (e) => e.stopPropagation()));
 }
 
 /* ------------------------------------------------------------------ drive */
 function tabDrive() {
-  const c = S.c;
+  const c = S.c, hv = HV();
   const states = ["all", ...new Set(c.storage_events.map((e) => e.state))];
+  const by = { yes: 0, probably: 0, no: 0, "": 0 };
+  c.storage_events.forEach((e) => (by[e.hl ?? ""] = (by[e.hl ?? ""] || 0) + 1));
+  const known = c.storage_events.length && c.storage_events[0].hl !== undefined;
+  const whoOpts = [["all", "All drives"], ["hl", `${hv} drive`], ["no", "Other drives"], ["none", "Not identified"]];
   $("#tabBody").innerHTML = `
-    ${c.disks.length ? `<div class="grid g3" style="margin-bottom:16px">${c.disks.map((d) => `<div class="card card-b">
-      <div class="muted small">Disk seen in logs · ${fmt(d.first_seen, false)}</div><div style="font-weight:700;font-size:15px;margin:3px 0 8px">${esc(d.Model || "Unknown model")}</div>
-      <dl class="kv">${Object.entries(d).filter(([k]) => !["Model", "first_seen"].includes(k)).map(([k, v]) => `<dt>${esc(k)}</dt><dd class="mono">${esc(v)}</dd>`).join("")}</dl></div>`).join("")}</div>`
-      : `<div class="note" style="margin-bottom:16px">No disk inventory events (Partition/Diagnostic 1006) in these logs — add that log to see model, firmware and serial.</div>`}
-    <div class="card"><div class="card-h"><h3>Storage warnings &amp; errors</h3>
-      <div class="row"><label class="muted small">State <select id="stF">${states.map((s) => `<option>${esc(s)}</option>`).join("")}</select></label></div></div>
-      <div class="tbl-wrap" style="max-height:calc(100vh - 380px)"><table class="t" id="stT"></table></div></div>`;
+    ${c.disks.length ? `<div class="grid g3" style="margin-bottom:16px">${c.disks.map((d) => `<div class="card card-b disk ${d.highlight ? "sam" : ""}">
+      <div class="row" style="justify-content:space-between"><span class="muted small">${esc(d.source === "named in storage events" ? "Named in storage events" : "Disk seen in logs")} · ${fmt(d.first_seen, false)}</span>${d.highlight ? `<span class="chip sam">${esc(hv)}</span>` : d.Vendor ? `<span class="chip other">${esc(d.Vendor)}</span>` : ""}</div>
+      <div style="font-weight:700;font-size:15px;margin:3px 0 8px">${esc(d.Model || "Unknown model")}</div>
+      <dl class="kv">${Object.entries(d).filter(([k]) => !["Model", "first_seen", "source", "highlight", "Vendor"].includes(k)).map(([k, v]) => `<dt>${esc(k)}</dt><dd class="mono">${esc(v)}</dd>`).join("")}</dl></div>`).join("")}</div>`
+      : `<div class="note" style="margin-bottom:16px">No disk inventory events (Partition/Diagnostic 1006) in these logs — add that log to see model, firmware and serial, and to tie disk events to a drive by disk number.</div>`}
+    <div class="card"><div class="card-h"><h3>Storage warnings &amp; errors <span class="muted small" id="stN"></span></h3>
+      <div class="row">${searchBox("stQ")}${known ? `<label class="muted small">Drive <select id="stW">${whoOpts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("")}</select></label>` : ""}
+        <label class="muted small">State <select id="stF">${states.map((s) => `<option>${esc(s)}</option>`).join("")}</select></label></div></div>
+      ${known ? `<div class="card-b" style="padding-bottom:0"><div class="dsum">
+        <span class="chip sam">${esc(hv)}</span><b>${by.yes}</b><span class="muted">named or mapped by disk number</span>
+        <span class="chip samp">${esc(hv)}?</span><b>${by.probably}</b><span class="muted">probably (name no drive, only drive seen)</span>
+        <span class="chip other">other drive</span><b>${by.no}</b>
+        <span class="chip nodata">not identified</span><b>${by[""]}</b></div></div>` : ""}
+      <div class="tbl-wrap" style="max-height:calc(100vh - 420px)"><table class="t" id="stT"></table></div></div>`;
   const draw = () => {
-    const f = $("#stF").value, rows = c.storage_events.filter((e) => f === "all" || e.state === f);
-    $("#stT").innerHTML = rows.length ? `<thead><tr><th>Time (${tzLabel()})</th><th>ID</th><th>Meaning</th><th>Provider</th><th>Log</th><th>State</th><th>Near</th></tr></thead><tbody>${rows.map((e) => {
-      const t = tsOf(e.time), near = nearestItem(t);
-      return `<tr class="click" data-idx="${e.idx}"><td style="white-space:nowrap">${fmt(e.time)}</td><td class="mono"><b>${e.eid}</b></td><td>${esc(e.label)}</td>
-        <td>${esc(e.provider.replace("Microsoft-Windows-", ""))}</td><td class="muted small">${esc(shortChan(e.channel))}</td><td>${stateChip(e.state)}</td>
-        <td>${near ? `<span class="muted small">${near.id} · ${esc(TYPES[near.type].short)} (${fmtDur(Math.abs(near.d))} ${near.d < 0 ? "before" : "after"})</span>` : ""}</td></tr>`;
-    }).join("")}</tbody>` : '<tr><td class="empty">No storage warnings or errors in these logs.</td></tr>';
-    $$("#stT tr.click").forEach((r) => (r.onclick = () => openContext(r.dataset.idx, "Storage event")));
+    const f = $("#stF").value, w = $("#stW")?.value || "all", m = matcher(S.v.stQ);
+    const rows = c.storage_events.filter((e) => (f === "all" || e.state === f) &&
+      (w === "all" || (w === "hl" ? isHl(e.hl) : w === "no" ? e.hl === "no" : !e.hl)) &&
+      (!m || m([e.eid], `${e.label} ${e.provider} ${e.dev || ""} ${e.dev_basis || ""} ${e.channel}`)));
+    $("#stN").textContent = rows.length < c.storage_events.length ? `${rows.length.toLocaleString()} of ${c.storage_events.length.toLocaleString()}` : "";
+    $("#stT").innerHTML = rows.length ? `<thead><tr><th>Time (${tzLabel()})</th><th>ID</th><th>Meaning</th><th>Provider</th><th>Drive</th><th>Log</th><th>State</th><th>Near</th></tr></thead><tbody>${rows.map((e) => `
+      <tr class="click ${isHl(e.hl) ? "sam" : ""}" data-idx="${e.idx}"><td style="white-space:nowrap">${fmt(e.time)}</td><td class="mono"><b>${e.eid}</b></td><td>${esc(e.label)}</td>
+        <td>${esc(e.provider.replace("Microsoft-Windows-", ""))}</td>
+        <td>${known ? `<span class="chips">${devBadge(e)}<span class="small">${esc(e.dev || "not identified")}</span></span><div class="muted small">${esc(e.dev_basis || "")}</div>` : '<span class="muted small">re-run to identify</span>'}</td>
+        <td class="muted small">${esc(shortChan(e.channel))}</td><td>${stateChip(e.state)}</td><td class="near">${nearCell(tsOf(e.time))}</td></tr>`).join("")}</tbody>`
+      : '<tr><td class="empty">No storage warnings or errors match.</td></tr>';
   };
-  $("#stF").onchange = draw; draw();
+  onRows($("#stT"), (r) => openContext(r.dataset.idx, "Storage event"));
+  bind(["stQ", "stF", "stW"], draw); draw();
 }
-function nearestItem(t) {
-  let best = null;
-  S.c.items.forEach((it) => {
-    const a = it.type === "sleep" ? it.start_ts || it.end_ts : it.last_alive_ts || it.boot_ts;
-    if (a == null) return; const d = t - a;
-    if (Math.abs(d) <= 3600 && (!best || Math.abs(d) < Math.abs(best.d))) best = { id: it.id, type: it.type, d };
-  });
-  return best;
+
+/* ------------------------------------------------------------------ apps & updates */
+function tabSoftware() {
+  const c = S.c, evs = c.software_events;
+  if (!evs) { $("#tabBody").innerHTML = '<div class="note">Re-run the analysis to see app, update and service events for this case.</div>'; return; }
+  const show = [["problems", "Problems & restarts"], ["all", "Everything"], ["app", "App crashes & hangs"], ["update", "Windows Update"],
+    ["install", "Installers"], ["service", "Services"], ["system", "Drivers, memory, power"]];
+  const noApp = !(c.channels || []).some((ch) => ch.kind === "application");
+  $("#tabBody").innerHTML = `
+    ${noApp ? '<div class="flagbox warn" style="margin-bottom:12px">' + ICON.warn + '<span>No Application log in this case — app crashes, hangs and installer events are not visible. Only System-log events (Windows Update, services, display driver) are checked.</span></div>' : ""}
+    <div class="card"><div class="card-h"><h3>App, update &amp; service events <span class="muted small" id="swN"></span></h3>
+      <div class="row">${searchBox("swQ")}<label class="muted small">Show <select id="swF">${show.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("")}</select></label></div></div>
+      <div class="card-b" style="padding-bottom:0"><div class="muted small">Crashes, hangs, Windows Update, installers and service failures. Click a power cycle under <b>Near</b> to see what triggered it.</div></div>
+      <div class="tbl-wrap" style="max-height:calc(100vh - 380px)"><table class="t" id="swT"></table></div></div>`;
+  const draw = () => {
+    const f = $("#swF").value, m = matcher(S.v.swQ);
+    const rows = evs.filter((e) => (f === "all" || (f === "problems" ? e.state !== "info" || ["restart", "reboot"].includes(e.kind) : e.group === f)) &&
+      (!m || m([e.eid], `${e.label} ${e.subject || ""} ${e.detail || ""} ${e.provider} ${e.channel}`)));
+    $("#swN").textContent = rows.length < evs.length ? `${rows.length.toLocaleString()} of ${evs.length.toLocaleString()}` : "";
+    $("#swT").innerHTML = rows.length ? `<thead><tr><th>Time (${tzLabel()})</th><th>ID</th><th>What</th><th>App / update / service</th><th>Source</th><th>Severity</th><th>Near</th></tr></thead><tbody>${rows.map((e) => `
+      <tr class="click" data-idx="${e.idx}"><td style="white-space:nowrap">${fmt(e.time)}</td><td class="mono"><b>${e.eid}</b></td><td>${esc(e.label)}</td>
+        <td>${esc(e.subject || "")}${e.detail ? `<div class="muted small">${esc(e.detail)}</div>` : ""}</td>
+        <td class="muted small">${esc(e.provider.replace("Microsoft-Windows-", ""))} · ${esc(shortChan(e.channel))}</td><td>${stateChip(e.state)}</td>
+        <td class="near">${nearCell(tsOf(e.time))}</td></tr>`).join("")}</tbody>`
+      : `<tr><td class="empty">${m && f !== "all" ? "No match here — try Show: Everything." : "Nothing of this kind was logged."}</td></tr>`;
+  };
+  onRows($("#swT"), (r) => openContext(r.dataset.idx, "App / update event"));
+  bind(["swQ", "swF"], draw); draw();
 }
 
 /* ------------------------------------------------------------------ data quality */
@@ -605,7 +813,8 @@ function tabQuality() {
         </tbody></table></div>
         <div class="card-h" style="border-top:1px solid var(--line-2)"><h3>Files</h3></div><div class="tbl-wrap"><table class="t"><thead><tr><th>File</th><th>Events</th><th>Read with</th></tr></thead><tbody>
         ${c.sources.map((s) => `<tr><td class="mono" title="${esc(s.path)}">${esc(s.file)}</td><td>${s.error ? `<span style="color:var(--bad)">error</span>` : s.events.toLocaleString()}</td><td class="muted">${esc(s.reader || "—")}</td></tr>`).join("")}
-        </tbody></table></div></div>
+        </tbody></table></div>
+        ${c.skipped_files ? `<div class="muted small pad">${c.skipped_files.toLocaleString()} other log${c.skipped_files > 1 ? "s" : ""} in the folder skipped — only System, Application and Storport are read from a folder.</div>` : ""}</div>
     </div>
     ${g.record_gaps.length ? `<div class="card" style="margin-top:16px"><div class="card-h"><h3>Record gaps</h3></div><div class="tbl-wrap"><table class="t">
       <thead><tr><th>Log</th><th>Missing</th><th>After record</th><th>Before record</th><th>Between</th></tr></thead><tbody>
@@ -613,46 +822,11 @@ function tabQuality() {
       </tbody></table></div></div>` : ""}`;
 }
 
-/* ------------------------------------------------------------------ SMART cross-check */
-function tabSmart() {
-  const sv = store.get("smart." + S.c.id, {});
-  $("#tabBody").innerHTML = `
-    <div class="card"><div class="card-h"><h3>Cross-check with the drive's own counters</h3></div><div class="card-b">
-      <div class="note">The NVMe SMART / Health log counts <b>Power Cycles</b> and <b>Unsafe Shutdowns</b> independently of Windows.
-        Take two SMART snapshots that bracket the log coverage (${fmt(S.c.coverage.start, false)} → ${fmt(S.c.coverage.end, false)}) and enter the <b>difference</b>.
-        If the drive counted more than the logs explain, events are missing from the OS logs.</div>
-      <div class="row" style="margin-top:14px">
-        <label class="muted small" style="display:flex;flex-direction:column;gap:4px">Power Cycles (delta)<input type="number" id="sm_pc" min="0" value="${sv.pc ?? ""}" style="width:180px"></label>
-        <label class="muted small" style="display:flex;flex-direction:column;gap:4px">Unsafe Shutdowns (delta)<input type="number" id="sm_us" min="0" value="${sv.us ?? ""}" style="width:180px"></label>
-      </div>
-      <div id="smRes"></div></div></div>`;
-  const run = () => {
-    const pc = $("#sm_pc").value, us = $("#sm_us").value; store.set("smart." + S.c.id, { pc, us });
-    $("#smRes").innerHTML = smartCompare(pc === "" ? null : +pc, us === "" ? null : +us);
-  };
-  $("#sm_pc").oninput = run; $("#sm_us").oninput = run; run();
-}
-function smartCompare(pc, us) {
-  const n = S.c.counts, thr = S.c.settings.review_threshold;
-  const hardSure = S.c.items.filter((x) => x.type === "hard" && x.confidence >= thr).length;
-  const pcMin = n.shutdown + n.hard + n.hibernate, pcMax = pcMin + n.restart + n.sleep + n.unknown;
-  const usMin = hardSure, usMax = n.hard + n.unknown;
-  const verdict = (v, lo, hi, what) => {
-    if (v == null) return `<div class="muted small">Enter the SMART delta to compare.</div>`;
-    if (v > hi) return `<div class="flagbox warn">${ICON.warn}<span>Drive counted <b>${v - hi}</b> more ${what} than the logs can explain — events are missing from the OS logs, or happened outside log coverage.</span></div>`;
-    if (v < lo) return `<div class="flagbox warn">${ICON.warn}<span>Logs show <b>${lo - v}</b> more ${what} than the drive counted — check the SMART snapshot window, or whether some transitions kept the drive powered.</span></div>`;
-    return `<div class="flagbox info">${ICON.ok}<span>Consistent with the logs.</span></div>`;
-  };
-  return `<div class="smart-res">
-    <div class="smart-box"><div class="muted small">Power cycles expected from logs</div><div class="big">${pcMin}${pcMax !== pcMin ? `–${pcMax}` : ""}</div>
-      <div class="muted small" style="margin:4px 0 10px">shutdowns + hard + hibernate${pcMax !== pcMin ? "; upper bound adds restarts, S3 sleeps and undetermined (platform-dependent whether they cut drive power)" : ""}</div>${verdict(pc, pcMin, pcMax, "power cycles")}</div>
-    <div class="smart-box"><div class="muted small">Unsafe shutdowns expected from logs</div><div class="big">${usMin}${usMax !== usMin ? `–${usMax}` : ""}</div>
-      <div class="muted small" style="margin:4px 0 10px">confident hard shutdowns${usMax !== usMin ? "; upper bound adds low-confidence hard and undetermined" : ""}</div>${verdict(us, usMin, usMax, "unsafe shutdowns")}</div></div>`;
-}
-
 /* ------------------------------------------------------------------ boot */
 function applyTheme(t) { document.documentElement.dataset.theme = t; store.set("theme", t); }
 async function init() {
+  // no longer kept: the last paths typed on the home screen, SMART check inputs
+  try { Object.keys(localStorage).filter((k) => k === "wela.paths" || k.startsWith("wela.smart.")).forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
   const theme = store.get("theme", matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   applyTheme(theme);
   $("#themeBtn").onclick = () => { applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"); if (S.tab === "timeline" && S.c) drawTimeline(); };
