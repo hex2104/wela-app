@@ -1,0 +1,625 @@
+<!doctype html>
+<!-- Source of docs/WELA-how-it-decides.pdf. Edit this file, then print it from the repository root with Chrome:
+       chrome --headless=new --no-pdf-header-footer --generate-pdf-document-outline --virtual-time-budget=5000
+              --print-to-pdf=docs/WELA-how-it-decides.pdf file:///<full path>/docs/src/WELA-how-it-decides.html
+     (on macOS chrome is "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome").
+     Every number here comes from wela/catalog.py and wela/engine.py; the examples are the demo case ("Try demo data"). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How WELA decides — technical briefing</title>
+<style>
+@page { size: A4; margin: 15mm 14mm 16mm 14mm;
+  @bottom-left { content: "WELA · how it decides — technical briefing"; font: 7.5pt -apple-system, "Helvetica Neue", Arial, sans-serif; color: #8a91a3; }
+  @bottom-right { content: counter(page) " / " counter(pages); font: 7.5pt -apple-system, "Helvetica Neue", Arial, sans-serif; color: #8a91a3; } }
+@page :first { margin: 0; @bottom-left { content: none } @bottom-right { content: none } }
+:root { --ink:#161b29; --ink2:#3a4256; --muted:#6b7387; --line:#dfe3ec; --line2:#eef1f6; --bg2:#f6f7fb;
+  --accent:#1428a0; --accent-soft:#e8ecfb; --sam:#0a7f8f; --sam-soft:#dcf2f5; --ok:#14805a; --ok-soft:#e3f4ec;
+  --warn:#b06d12; --warn-soft:#fcf1de; --bad:#c23a2e; --bad-soft:#fbe7e4; --purple:#6a4bc4; --purple-soft:#eee9fb;
+  --grey:#77808f; --grey-soft:#eef0f3; }
+* { box-sizing: border-box; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body { margin: 0; font: 9.3pt/1.48 -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; color: var(--ink); }
+h1, h2, h3 { line-height: 1.2; color: var(--ink); }
+h1 { font-size: 19pt; margin: 26px 0 4px; padding-top: 14px; border-top: 2px solid var(--line2); letter-spacing: -.01em; display: flex; align-items: baseline; gap: 10px; break-after: avoid; }
+h1.pg { break-before: page; margin-top: 0; padding-top: 0; border-top: none; }
+h1 .n { font-size: 11pt; color: #fff; background: var(--accent); border-radius: 6px; padding: 2px 8px; position: relative; top: -3px; }
+h2 { font-size: 12.5pt; margin: 18px 0 6px; break-after: avoid; }
+h3 { font-size: 10.5pt; margin: 12px 0 4px; break-after: avoid; }
+p { margin: 5px 0 7px; }
+ul, ol { margin: 4px 0 8px; padding-left: 18px; } li { margin: 2px 0; }
+.lead { font-size: 11pt; color: var(--ink2); border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; margin: 6px 0 12px; break-after: avoid; }
+.muted { color: var(--muted); } .small { font-size: 8.4pt; }
+code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 8.4pt; }
+code { background: var(--bg2); border: 1px solid var(--line2); border-radius: 4px; padding: 0 3px; }
+table.t { width: 100%; border-collapse: separate; border-spacing: 0; margin: 6px 0 12px; font-size: 8.6pt; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+table.t th { background: var(--accent); color: #fff; text-align: left; font-weight: 600; padding: 5px 7px; vertical-align: bottom; }
+table.t td { padding: 5px 7px; border-top: 1px solid var(--line2); vertical-align: top; }
+table.t tr { break-inside: avoid; }
+table.t thead { display: table-header-group; }
+table.t tr:nth-child(even) td { background: #fafbfe; }
+table.t td.k { font-weight: 600; }
+table.t td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.t.compact td, table.t.compact th { padding: 3px 6px; }
+table.t tr.sub td { background: var(--bg2); font-weight: 600; color: var(--ink2); }
+.chip { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 7.8pt; font-weight: 700; line-height: 15px; white-space: nowrap; }
+.c-sam { background: var(--sam); color: #fff; } .c-samp { background: var(--sam-soft); color: var(--sam); box-shadow: inset 0 0 0 1px var(--sam); }
+.c-other { background: var(--grey-soft); color: var(--ink2); } .c-nd { background: var(--grey-soft); color: var(--grey); }
+.c-bad { background: var(--bad-soft); color: var(--bad); } .c-warn { background: var(--warn-soft); color: var(--warn); }
+.c-ok { background: var(--ok-soft); color: var(--ok); } .c-acc { background: var(--accent-soft); color: var(--accent); }
+.c-sw { background: var(--accent); color: #fff; }
+.callout { border-radius: 9px; padding: 8px 12px; margin: 8px 0 12px; background: var(--accent-soft); border: 1px solid #cfd7f6; break-inside: avoid; }
+.callout b:first-child { color: var(--accent); }
+.callout.warn { background: var(--warn-soft); border-color: #f1d9ad; } .callout.warn b:first-child { color: var(--warn); }
+.callout.sam { background: var(--sam-soft); border-color: #a9dde4; } .callout.sam b:first-child { color: var(--sam); }
+.formula { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 8.5pt; line-height: 1.7; background: var(--bg2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 8px 12px; margin: 6px 0 12px; break-inside: avoid; }
+.formula b { color: var(--accent); font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; }
+.formula > div { display: grid; grid-template-columns: 100px 1fr; gap: 8px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 8px 0 12px; }
+.tile { border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; border-top: 3px solid var(--c, var(--accent)); break-inside: avoid; }
+.tile b { display: block; font-size: 15pt; line-height: 1.15; color: var(--c, var(--accent)); }
+.tile span { font-size: 8.4pt; color: var(--ink2); }
+.qa { break-inside: avoid; border-top: 1px solid var(--line2); padding: 6px 0 4px; }
+.qa .qq { font-weight: 700; color: var(--accent); display: block; margin-bottom: 1px; }
+.qcols { columns: 2; column-gap: 20px; }
+svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-inside: avoid; font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; }
+.toc { columns: 2; column-gap: 26px; font-size: 10pt; }
+.toc a { color: var(--ink); text-decoration: none; display: flex; gap: 8px; padding: 4px 0; border-bottom: 1px dotted var(--line); break-inside: avoid; }
+.toc a span:first-child { color: var(--accent); font-weight: 700; min-width: 22px; }
+.toc a small { color: var(--muted); display: block; font-size: 8.2pt; }
+.avoid { break-inside: avoid; }
+/* cover */
+.cover { height: 297mm; padding: 26mm 22mm 20mm; background: linear-gradient(160deg, #1428a0 0%, #0e1b6e 58%, #0a7f8f 140%); color: #fff; display: flex; flex-direction: column; }
+.cover .logo { display: flex; gap: 12px; align-items: center; font-weight: 800; letter-spacing: .12em; font-size: 13pt; }
+.cover .logo svg { width: 40px; height: 40px; }
+.cover h0 { display: block; font-size: 38pt; font-weight: 800; letter-spacing: -.02em; margin-top: 46mm; line-height: 1.05; }
+.cover .sub { font-size: 15pt; opacity: .92; margin-top: 8px; }
+.cover .desc { font-size: 10.5pt; opacity: .85; max-width: 150mm; margin-top: 14px; line-height: 1.55; }
+.cover .qs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18mm; max-width: 165mm; }
+.cover .qs div { background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.22); border-radius: 10px; padding: 9px 12px; font-size: 10pt; }
+.cover .qs b { display: block; font-size: 8pt; letter-spacing: .1em; text-transform: uppercase; opacity: .75; margin-bottom: 2px; }
+.cover .meta { margin-top: auto; font-size: 9pt; opacity: .85; display: flex; gap: 22px; flex-wrap: wrap; border-top: 1px solid rgba(255,255,255,.25); padding-top: 10px; }
+</style>
+</head>
+<body>
+
+<!-- ============================================================ COVER -->
+<section class="cover">
+  <div class="logo"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#fff"/><path d="M6 20h5l3-9 4 13 3-8h5" fill="none" stroke="#1428a0" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>WELA</div>
+  <h0>How WELA<br>decides</h0>
+  <div class="sub">Technical briefing — the rules, the scores and the reasons</div>
+  <div class="desc">Every verdict and every percentage WELA shows, and exactly how it is worked out: how a power cycle is
+    classified and scored, how Storport and disk events are judged, how a fault is tied to the Samsung drive, and how one
+    app, update or service is singled out as the trigger — with the arithmetic for real examples and the questions to expect.</div>
+  <div class="qs">
+    <div><b>Question 1</b>How is each power cycle classified — and what does its % mean?</div>
+    <div><b>Question 2</b>How are Storport and disk events judged?</div>
+    <div><b>Question 3</b>When does WELA say the drive caused it — and that it is Samsung's?</div>
+    <div><b>Question 4</b>How is an app, update or service singled out as the trigger?</div>
+  </div>
+  <div class="meta"><span>Version 0.1.0</span><span>Branch <b>main</b></span><span>2 November 2026</span><span>Prepared by Hitesh Kumar</span></div>
+</section>
+
+<!-- ============================================================ CONTENTS -->
+<h1 id="contents" style="margin-top:0;padding-top:0;border-top:none">Contents</h1>
+<div class="toc" style="margin-top:12px">
+  <a href="#short"><span>1</span><div>The short version<small>Principles, the four answers and their four measures</small></div></a>
+  <a href="#timeline"><span>2</span><div>From log files to one timeline<small>Which logs, how they are read, three meanings per event</small></div></a>
+  <a href="#windows"><span>3</span><div>Boots, sessions and time windows<small>What is read where, and why that long</small></div></a>
+  <a href="#classify"><span>4</span><div>How a power cycle is classified<small>The decision order, subtypes, restart vs. shutdown</small></div></a>
+  <a href="#confidence"><span>5</span><div>The confidence percentage<small>Formula, weights, why these numbers, worked examples</small></div></a>
+  <a href="#storport"><span>6</span><div>How Storport and disk events are judged<small>Labels, states, severity, platform vs. drive</small></div></a>
+  <a href="#drive"><span>7</span><div>Did the drive cause it?<small>Rules, crash codes, effect after boot</small></div></a>
+  <a href="#which"><span>8</span><div>Which drive — is it Samsung's?<small>Named, disk number, only drive</small></div></a>
+  <a href="#software"><span>9</span><div>How apps, updates and services are singled out<small>Catalogue, window, 1074 decoding, precedence, %</small></div></a>
+  <a href="#quality"><span>10</span><div>Data quality<small>When the logs themselves are suspect</small></div></a>
+  <a href="#eng"><span>11</span><div>Engineering facts<small>Stack, privacy, determinism, tests, speed</small></div></a>
+  <a href="#limits"><span>12</span><div>Limits — and what to say<small>Stated up front</small></div></a>
+  <a href="#qa"><span>13</span><div>Questions to expect<small>Twenty questions with short answers</small></div></a>
+  <a href="#numbers"><span>A</span><div>Every number in one place<small>All settings and weights, with defaults</small></div></a>
+</div>
+
+<!-- ============================================================ 1 SHORT -->
+<h1 id="short"><span class="n">1</span>The short version</h1>
+<div class="lead">WELA reads a PC's Windows event logs and answers four questions for every power cycle with fixed, written-down rules. Every answer shows its evidence, what was expected but not logged, and how strong it is.</div>
+<h2>Design principles</h2>
+<ul>
+  <li><b>Rules, not a trained model.</b> The same logs always give the same answer. Every event ID, weight and time window lives in one catalogue file (<code>wela/catalog.py</code>) and is pinned by automated tests.</li>
+  <li><b>Evidence-weighted.</b> Each event Windows writes when a PC stops carries a weight; the confidence is the sum of what was found, minus penalties for contradictions and log gaps.</li>
+  <li><b>Redundant signals.</b> Windows records one stop several times, in different logs and by different components. WELA reads all of them, so one lost event does not change the answer — it only lowers the score.</li>
+  <li><b>Honest about gaps.</b> When the logs cannot show something, WELA says <i>Undetermined</i> or <i>Can't tell</i> rather than guess. Missing records, cleared logs and clock changes are detected and lower confidence.</li>
+  <li><b>Explainable.</b> Every verdict lists the events behind it, each one clickable to its raw data.</li>
+  <li><b>Local only.</b> Runs on the engineer's PC, serves the UI on 127.0.0.1 and makes no network calls; the logs never leave the machine.</li>
+</ul>
+<h2>Four answers — four different measures</h2>
+<table class="t">
+  <thead><tr><th style="width:20%">Question</th><th style="width:36%">Answer shown</th><th>How strong — the measure</th><th style="width:8%">Chapter</th></tr></thead><tbody>
+  <tr><td class="k">How did it end?</td><td>Normal shutdown, Restart, Hard shutdown (with a subtype), Sleep / hibernate, Undetermined</td><td><b>Confidence %</b> — how complete and consistent the evidence for that ending is</td><td>4–5</td></tr>
+  <tr><td class="k">Did the drive cause it?</td><td>Likely, Possibly, No drive evidence, Can't tell — "No (orderly)" for clean stops</td><td><b>Labelled levels</b>, no percentage</td><td>6–7</td></tr>
+  <tr><td class="k">Which drive?</td><td>Samsung drive, Probably the Samsung drive, Another drive, Drive not identified</td><td><b>Sure vs. probable</b></td><td>8</td></tr>
+  <tr><td class="k">What triggered it?</td><td>e.g. Windows Update, User request, Apps / services hung, App crashed</td><td><b>Confirmed / Likely / Possibly</b> with its <b>own %</b></td><td>9</td></tr>
+</tbody></table>
+<div class="callout"><b>Two percentages, not one.</b> In the detail drawer, the large percentage under <i>Confidence</i> is about <i>how the power cycle ended</i>. The small one next to the trigger — e.g. <i>App crashed · Possibly · 25%</i> — is about <i>what triggered it</i>. They come from separate weights and answer separate questions; a power cycle can be a 100%-certain hard shutdown with only a 25% software lead.</div>
+<div class="grid4">
+  <div class="tile"><b>52</b><span>automated tests, including a demo case with known answers</span></div>
+  <div class="tile" style="--c:var(--sam)"><b>0.2 s</b><span>to analyse 19,640 events / 640 power cycles</span></div>
+  <div class="tile" style="--c:var(--ok)"><b>0</b><span>installs — Python standard library and Windows' own wevtutil</span></div>
+  <div class="tile" style="--c:var(--purple)"><b>4</b><span>logs read: System, Application, Storport, Partition (optional)</span></div>
+</div>
+
+<!-- ============================================================ 2 TIMELINE -->
+<h1 id="timeline"><span class="n">2</span>From log files to one timeline</h1>
+<div class="lead">Every event, from every log, becomes one record on one UTC timeline. Each record is then tagged with what it means.</div>
+<h2>Which logs, and what each contributes</h2>
+<table class="t">
+  <thead><tr><th style="width:30%">Log</th><th>What WELA takes from it</th></tr></thead><tbody>
+  <tr><td class="k">System</td><td>Power-cycle events (12, 13, 41, 109, 1074, 6005, 6006, 6008 …), disk / NTFS / NVMe driver events, service failures, display-driver timeouts, Windows Update</td></tr>
+  <tr><td class="k">Application</td><td>App crashes and hangs, Windows Error Reporting (including blue-screen reports), installer events</td></tr>
+  <tr><td class="k">Storage-Storport / Operational (+ Health)</td><td>Per-request storage problems — timeouts, resets, retries — often with the drive's vendor, product ID and serial</td></tr>
+  <tr><td class="k">Partition / Diagnostic <span class="muted">(optional)</span></td><td>The drive inventory at each boot: model, serial, firmware, disk number — turns "Disk 1" into a named drive</td></tr>
+</tbody></table>
+<p class="small">From a folder (e.g. a copy of <code>C:\Windows\System32\winevt\Logs</code>, which holds hundreds of logs) only System, Application and Storport are read and the rest are counted as skipped; a file given by itself is always read.</p>
+<h2>Reading and normalising</h2>
+<ul>
+  <li><b>.evtx</b> files are read on Windows with the built-in <code>wevtutil</code> — Windows renders its own events, so field names and values are exactly what Windows stored. Fallbacks: PowerShell <code>Get-WinEvent</code>, then the optional <code>python-evtx</code> package on other systems. XML exports are read too.</li>
+  <li>Every event becomes one record: time (UTC), log, provider, event ID, record ID, level (1 critical · 2 error · 3 warning · 4 information) and its data fields (named fields, or <code>param1…n</code> when Windows does not name them).</li>
+  <li>All logs are merged into one timeline sorted by time (System first at equal times, then record ID). <b>Why UTC:</b> logs from different time zones or across daylight-saving changes line up; the UI converts to the chosen zone.</li>
+</ul>
+<h2>Three meanings per event</h2>
+<table class="t">
+  <thead><tr><th style="width:22%">Meaning</th><th style="width:44%">Example</th><th>Used for</th></tr></thead><tbody>
+  <tr><td class="k">Power signal</td><td>Kernel-Power 41 → "Unclean shutdown reported"</td><td>Classification and its confidence (ch. 4–5)</td></tr>
+  <tr><td class="k">Storage meaning</td><td>stornvme 129 → "Reset to device", state <i>reset</i></td><td>The drive verdict (ch. 6–8)</td></tr>
+  <tr><td class="k">Software meaning</td><td>Application Hang 1002 → "Application hung", group <i>app</i>, kind <i>hang</i>, subject <i>explorer.exe</i></td><td>The trigger verdict (ch. 9)</td></tr>
+</tbody></table>
+<p>Matching is by provider + event ID from the catalogue, so the rules work on meanings and there is one place to change them. A <code>wela_config.json</code> next to <code>run_wela.py</code> overrides any part of the catalogue without touching code.</p>
+
+<!-- ============================================================ 3 WINDOWS -->
+<h1 id="windows"><span class="n">3</span>Boots, sessions and time windows</h1>
+<div class="lead">Every boot closes the session before it. WELA finds the boots, then asks of each one: how did the session before it end — and what was happening around that moment?</div>
+<ul>
+  <li><b>A boot</b> = Kernel-General 12, EventLog 6005 / 6009 and Kernel-Boot 27 within 180 s of each other. Any one of 12 or 6005 is enough (or 27 with BootType 0 / 1), so a boot is found even when a marker is missing. Kernel-Boot 27 BootType 1 = a Fast Startup boot; BootType 2 = a resume from hibernate, which is <i>not</i> a boot.</li>
+  <li><b>A session</b> = everything between two boots. <b>The last sign of life</b> = the last event of any log before the next boot — the anchor for a hard shutdown, because a power loss writes nothing at the moment it happens.</li>
+  <li><b>Sleeps</b> inside a session are rebuilt from Kernel-Power 42 (enter) and 107 (resume), Power-Troubleshooter 1 (sleep / wake times and wake source), 506 / 507 (Modern Standby) and Kernel-Boot 27 BootType 2 (hibernate resume). Any one of them is enough to rebuild an episode.</li>
+</ul>
+<svg class="dia" viewBox="0 0 680 250" role="img" aria-label="Time windows around one power cycle">
+  <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#cfd4de" stroke-width="2"/></pattern></defs>
+  <text x="396" y="14" font-size="9" fill="#161b29" text-anchor="end" font-weight="700">last sign of life</text>
+  <text x="474" y="14" font-size="9" fill="#161b29" font-weight="700">next boot</text>
+  <rect x="150" y="22" width="250" height="22" rx="5" fill="#e8ecfb" stroke="#1428a0"/>
+  <text x="160" y="37" font-size="9.5" fill="#1428a0" font-weight="600">Boot session A</text>
+  <rect x="400" y="22" width="70" height="22" fill="url(#hatch)" stroke="#cfd4de"/>
+  <text x="435" y="37" font-size="9" fill="#6b7387" text-anchor="middle">off</text>
+  <rect x="470" y="22" width="200" height="22" rx="5" fill="#e8ecfb" stroke="#1428a0"/>
+  <text x="480" y="37" font-size="9.5" fill="#1428a0" font-weight="600">Boot session B</text>
+  <line x1="400" y1="18" x2="400" y2="210" stroke="#161b29" stroke-dasharray="3 3"/>
+  <line x1="470" y1="18" x2="470" y2="210" stroke="#161b29" stroke-dasharray="3 3"/>
+  <text x="10" y="70" font-size="9.5" fill="#161b29" font-weight="700">How it ended</text>
+  <rect x="250" y="57" width="150" height="20" rx="4" fill="#fcf1de" stroke="#b06d12"/>
+  <text x="258" y="71" font-size="8.5" fill="#b06d12">stop signals: last 30 min</text>
+  <rect x="470" y="57" width="150" height="20" rx="4" fill="#fbe7e4" stroke="#c23a2e"/>
+  <text x="478" y="71" font-size="8.5" fill="#c23a2e">hard signals: first 15 min</text>
+  <text x="10" y="107" font-size="9.5" fill="#161b29" font-weight="700">Drive verdict</text>
+  <rect x="370" y="94" width="30" height="20" rx="4" fill="#dcf2f5" stroke="#0a7f8f"/>
+  <text x="364" y="108" font-size="8.5" fill="#0a7f8f" text-anchor="end">60 s before</text>
+  <rect x="470" y="94" width="30" height="20" rx="4" fill="#dcf2f5" stroke="#0a7f8f"/>
+  <text x="506" y="108" font-size="8.5" fill="#0a7f8f">60 s after</text>
+  <text x="10" y="144" font-size="9.5" fill="#161b29" font-weight="700">Trigger verdict</text>
+  <rect x="300" y="131" width="100" height="20" rx="4" fill="#eee9fb" stroke="#6a4bc4"/>
+  <text x="350" y="145" font-size="8.5" fill="#6a4bc4" text-anchor="middle">15 min</text>
+  <text x="294" y="145" font-size="8.5" fill="#6a4bc4" text-anchor="end">never before the previous boot / wake</text>
+  <rect x="470" y="131" width="70" height="20" rx="4" fill="#eee9fb" stroke="#6a4bc4"/>
+  <text x="505" y="145" font-size="8.5" fill="#6a4bc4" text-anchor="middle">10 min</text>
+  <text x="546" y="145" font-size="8.5" fill="#6a4bc4">not past the next power-off</text>
+  <text x="10" y="181" font-size="9.5" fill="#161b29" font-weight="700">App / update lists</text>
+  <rect x="150" y="168" width="250" height="20" rx="4" fill="#f8f6fe" stroke="#6a4bc4" stroke-dasharray="4 3"/>
+  <text x="158" y="182" font-size="8.5" fill="#6a4bc4">everything since the previous boot / wake</text>
+  <rect x="470" y="168" width="200" height="20" rx="4" fill="#f8f6fe" stroke="#6a4bc4" stroke-dasharray="4 3"/>
+  <text x="478" y="182" font-size="8.5" fill="#6a4bc4">everything until the next power-off</text>
+  <text x="10" y="232" font-size="8.5" fill="#6b7387">Not to scale. For a sleep the same windows sit around sleep entry and wake. Every length is a setting (appendix A).</text>
+</svg>
+<table class="t">
+  <thead><tr><th style="width:16%">Window</th><th style="width:25%">Length</th><th style="width:22%">Reads</th><th>Why this length</th></tr></thead><tbody>
+  <tr><td class="k">Stop signals</td><td>last 30 min before the last sign of life</td><td>1074, 13, 6006, 109, 7002</td><td>An orderly shutdown writes them within seconds to minutes; 30 min tolerates slow shutdowns such as update installs.</td></tr>
+  <tr><td class="k">Hard signals</td><td>first 15 min after the boot</td><td>41, 6008, 1001</td><td>Windows writes them while booting; the crash report (1001) can follow minutes later, once the dump is processed.</td></tr>
+  <tr><td class="k">Drive</td><td>60 s before the last sign of life (to +5 s) and 60 s after boot</td><td>every storage event, every level</td><td>A drive fault that brings a PC down shows seconds before it (demo: resets 32 s and 17 s before). A wider window pulls in unrelated noise.</td></tr>
+  <tr><td class="k">Trigger verdict</td><td>15 min before power-off, 10 min after boot — never past the power cycle before or the one after</td><td>app, update, service events</td><td>Long enough for an install or a hang that builds up; never another power cycle's events.</td></tr>
+  <tr><td class="k">App / update lists</td><td>from the previous boot / wake to this power-off; from this boot to the next power-off</td><td>everything, for the engineer</td><td>A slow cause can start hours earlier; nothing is hidden. One cycle's "after" list is the next one's "before" list.</td></tr>
+</tbody></table>
+
+<!-- ============================================================ 4 CLASSIFY -->
+<h1 id="classify"><span class="n">4</span>How a power cycle is classified</h1>
+<div class="lead">The order of the checks is the design. Windows' own report of an unclean stop beats everything; then a clean stop; only when both are absent does WELA infer — and it says so.</div>
+<svg class="dia" viewBox="0 0 680 360" role="img" aria-label="Decision order for classifying a power cycle">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b7387"/></marker></defs>
+  <g font-size="9.5" fill="#161b29">
+    <rect x="10" y="10" width="370" height="44" rx="7" fill="#f6f7fb" stroke="#cfd4de"/>
+    <text x="22" y="29" font-weight="700">1 · Did the next boot log 41, 6008 or a 1001 crash report</text><text x="34" y="44">within its first 15 min?</text>
+    <rect x="430" y="10" width="240" height="44" rx="7" fill="#fbe7e4" stroke="#c23a2e"/>
+    <text x="442" y="29" font-weight="700" fill="#c23a2e">Hard shutdown</text><text x="442" y="44" fill="#c23a2e">subtype from the 41 fields (table below)</text>
+    <rect x="10" y="70" width="370" height="44" rx="7" fill="#f6f7fb" stroke="#cfd4de"/>
+    <text x="22" y="89" font-weight="700">2 · Did the session end with 1074, 13, 6006, 109 or 7002</text><text x="34" y="104">in its last 30 min?</text>
+    <rect x="430" y="70" width="240" height="44" rx="7" fill="#e3f4ec" stroke="#14805a"/>
+    <text x="442" y="89" font-weight="700" fill="#14805a">Clean stop: restart or shutdown</text><text x="442" y="104" fill="#14805a">1074 type · Fast Startup · else 5-min gap</text>
+    <rect x="10" y="130" width="370" height="44" rx="7" fill="#f6f7fb" stroke="#cfd4de"/>
+    <text x="22" y="149" font-weight="700">3 · Does the log start at this boot?</text><text x="34" y="164">(the session before it is not in the logs)</text>
+    <rect x="430" y="130" width="240" height="44" rx="7" fill="#eef0f3" stroke="#77808f"/>
+    <text x="442" y="149" font-weight="700" fill="#4b5262">Undetermined · 0%</text><text x="442" y="164" fill="#4b5262">nothing to judge</text>
+    <rect x="10" y="190" width="370" height="44" rx="7" fill="#f6f7fb" stroke="#cfd4de"/>
+    <text x="22" y="209" font-weight="700">4 · Are System-log records missing at the boundary?</text><text x="34" y="224">(record-ID gap, or System log not covering it)</text>
+    <rect x="430" y="190" width="240" height="44" rx="7" fill="#eef0f3" stroke="#77808f"/>
+    <text x="442" y="209" font-weight="700" fill="#4b5262">Undetermined · 20%</text><text x="442" y="224" fill="#4b5262">the stop events may be in the gap</text>
+    <rect x="10" y="250" width="370" height="44" rx="7" fill="#f6f7fb" stroke="#cfd4de"/>
+    <text x="22" y="269" font-weight="700">5 · Was the PC asleep, with no resume logged?</text><text x="34" y="284">(a sleep that never ended)</text>
+    <rect x="430" y="250" width="240" height="44" rx="7" fill="#fbe7e4" stroke="#c23a2e"/>
+    <text x="442" y="269" font-weight="700" fill="#c23a2e">Hard: power lost during sleep</text><text x="442" y="284" fill="#c23a2e">inferred · 30% · needs review</text>
+    <rect x="10" y="310" width="370" height="40" rx="7" fill="#fff" stroke="#c23a2e" stroke-dasharray="4 3"/>
+    <text x="22" y="334" font-weight="700" fill="#c23a2e">Hard: inferred — nothing logged before the boot · 30% · needs review</text>
+  </g>
+  <g stroke="#6b7387" stroke-width="1.3" marker-end="url(#ar)">
+    <line x1="380" y1="32" x2="428" y2="32"/><line x1="380" y1="92" x2="428" y2="92"/><line x1="380" y1="152" x2="428" y2="152"/>
+    <line x1="380" y1="212" x2="428" y2="212"/><line x1="380" y1="272" x2="428" y2="272"/>
+    <line x1="195" y1="54" x2="195" y2="68"/><line x1="195" y1="114" x2="195" y2="128"/><line x1="195" y1="174" x2="195" y2="188"/>
+    <line x1="195" y1="234" x2="195" y2="248"/><line x1="195" y1="294" x2="195" y2="308"/>
+  </g>
+  <g font-size="8.5" fill="#6b7387">
+    <text x="396" y="27">yes</text><text x="396" y="87">yes</text><text x="396" y="147">yes</text><text x="396" y="207">yes</text><text x="396" y="267">yes</text>
+    <text x="201" y="65">no</text><text x="201" y="125">no</text><text x="201" y="185">no</text><text x="201" y="245">no</text><text x="201" y="305">no</text>
+  </g>
+</svg>
+<p class="small"><b>Why hard signals come first:</b> a PC can log a clean stop and still lose power before it finishes. Kernel-Power 41 is written by the kernel at the <i>next</i> boot, when it finds the previous stop was not completed — it is Windows' own after-the-fact verdict, so it outranks anything written beforehand. When both appear, the power cycle is a hard shutdown with a conflict penalty (chapter 5).</p>
+<h2>Hard-shutdown subtype — read from the fields of event 41 (first match)</h2>
+<table class="t">
+  <thead><tr><th style="width:34%">Evidence</th><th style="width:30%">Subtype</th><th>What it means</th></tr></thead><tbody>
+  <tr><td><code>BugcheckCode</code> ≠ 0, or a 1001 crash report</td><td>Crash (bugcheck 0x…)</td><td>Windows stopped with a blue screen; the code says why (chapter 7)</td></tr>
+  <tr><td><code>PowerButtonTimestamp</code> ≠ 0</td><td>Power button long-press</td><td>Someone held the power button — usually because the PC had stopped responding</td></tr>
+  <tr><td><code>SleepInProgress</code> ≠ 0, or a sleep never resumed</td><td>Power lost during sleep / hibernate</td><td>Battery drained or power cut while asleep</td></tr>
+  <tr><td>Stop events logged, then 41</td><td>Shutdown started but did not complete (hang)</td><td>The shutdown hung on the way down</td></tr>
+  <tr><td>None of the above</td><td>Power loss / hang / forced reset</td><td>Power cut, hard reset or a freeze — nothing in the logs says which</td></tr>
+</tbody></table>
+<h2>Restart or shutdown?</h2>
+<ol>
+  <li>The 1074's shutdown type (param 5), matched in English, German, French, Spanish, Italian, Dutch, Japanese, Chinese, Korean and Russian.</li>
+  <li>The next boot is a Fast Startup boot (Kernel-Boot 27 BootType 1) → <b>shutdown</b> (Fast Startup: the kernel hibernated).</li>
+  <li>Otherwise the stop-to-boot gap: under 5 min → <b>restart</b>, else <b>shutdown</b> — flagged <i>"inferred from gap"</i>.</li>
+  <li>A 1074 that says restart but a boot more than 30 min later → warning, needs review.</li>
+</ol>
+
+<!-- ============================================================ 5 CONFIDENCE -->
+<h1 id="confidence"><span class="n">5</span>The confidence percentage</h1>
+<div class="lead">Confidence = how much of the evidence Windows normally writes for this kind of ending was found, minus penalties for contradictions and log gaps. It is an evidence score on a 0–100% scale — not a statistical probability.</div>
+<div class="formula">
+<div><b>Clean stop</b><span>min(1, Σ clean-stop weights) + 0.10 if the type is stated − penalties</span></div>
+<div><b>Hard shutdown</b><span>Σ hard-shutdown weights + 0.30 if no stop signal was logged − penalties</span></div>
+<div><b>Nothing logged</b><span>0.30 — an inferred hard shutdown</span></div>
+<div><b>Undetermined</b><span>0.20 at a log gap · 0 when the log starts at this boot</span></div>
+<div><b>Shown as</b><span>clamp to 0 … 1, then round(confidence × 100) %</span></div>
+</div>
+<div class="grid2">
+<table class="t compact">
+  <thead><tr><th>Clean-stop evidence</th><th style="width:13%">Weight</th></tr></thead><tbody>
+  <tr><td>User32 1074 — shutdown requested</td><td class="n">0.35</td></tr>
+  <tr><td>Kernel-General 13 — OS stopped</td><td class="n">0.30</td></tr>
+  <tr><td>EventLog 6006 — event log stopped</td><td class="n">0.30</td></tr>
+  <tr><td>Kernel-Power 109 — kernel shutdown initiated</td><td class="n">0.20</td></tr>
+  <tr><td>Winlogon 7002 — user logoff</td><td class="n">0.05</td></tr>
+  <tr><td>Type stated — 1074 says restart / power off, or a Fast Startup boot</td><td class="n">+0.10</td></tr>
+</tbody></table>
+<table class="t compact">
+  <thead><tr><th>Hard-shutdown evidence &amp; penalties</th><th style="width:13%">Weight</th></tr></thead><tbody>
+  <tr><td>Kernel-Power 41 — unclean shutdown reported</td><td class="n">0.50</td></tr>
+  <tr><td>EventLog 6008 — previous shutdown unexpected</td><td class="n">0.40</td></tr>
+  <tr><td>1001 — bugcheck / crash report</td><td class="n">0.20</td></tr>
+  <tr><td>No stop signal at all before the boot</td><td class="n">+0.30</td></tr>
+  <tr><td>Conflict: 13 + 6006 logged, yet 41 / 6008 on boot</td><td class="n">−0.25</td></tr>
+  <tr><td>System records missing at the boundary</td><td class="n">−0.30</td></tr>
+</tbody></table>
+</div>
+<h2>Why these numbers</h2>
+<ul>
+  <li><b>By how directly the event records the ending.</b> 41 is the kernel's own verdict at the next boot (0.50). 6008 comes from a different component — the event log service noticing it was not closed cleanly — so it is independent confirmation (0.40). A crash report confirms a crash, but not every hard stop is a crash (0.20). On the clean side, 1074 is the request itself (0.35); 13 and 6006 are the kernel's and the event log's last clean words (0.30 each); 109 shows the shutdown started, not that it finished (0.20); a logoff also happens without any shutdown (0.05).</li>
+  <li><b>So that one weak signal never passes review, and two independent ones do.</b> The review line is 60%:
+    1074 alone 45% · 13 alone 30% · 1001 alone 50% — <i>review</i>; 13 + 6006 = 60% · 6008 alone 70% · 41 alone 80% — <i>pass</i> (both hard cases include the +0.30 for a silent end).</li>
+  <li><b>Capped at 100%:</b> once the expected evidence is all there, more of it adds no certainty.</li>
+  <li><b>Hand-set, not fitted.</b> There is no labelled set of claims to fit them to yet; they were set from how Windows writes these events and checked against the demo cases. They live in <code>catalog.py</code>, can be tuned without code, and calibration on 20–30 closed claims is the next step.</li>
+</ul>
+<h2>Worked examples</h2>
+<table class="t">
+  <thead><tr><th style="width:6%">ID</th><th style="width:24%">Situation</th><th>Calculation</th><th style="width:17%">Shown</th></tr></thead><tbody>
+  <tr><td>T2</td><td>Normal shutdown</td><td>0.35 + 0.30 + 0.30 + 0.20 + 0.05 = 1.20 → capped 1.00; + 0.10 stated type → capped 1.00</td><td>100%</td></tr>
+  <tr><td>T6</td><td>Shutdown, 6006 lost</td><td>0.35 + 0.30 + 0.20 + 0.05 = 0.90; + 0.10 = 1.00 — 6006 listed as "expected, not logged"</td><td>100%</td></tr>
+  <tr><td>T13</td><td>Restart, no 1074</td><td>0.30 + 0.30 + 0.20 + 0.05 = 0.85; no type stated, so no bonus; restart inferred from a 1-min gap</td><td>85%</td></tr>
+  <tr><td>T5</td><td>Power loss</td><td>41 0.50 + 6008 0.40 + silent end 0.30 = 1.20 → capped</td><td>100%</td></tr>
+  <tr><td>T7</td><td>Crash 0x9F</td><td>0.50 + 0.40 + 1001 0.20 + 0.30 = 1.40 → capped</td><td>100%</td></tr>
+  <tr><td>T10</td><td>Session just ends, nothing logged</td><td>inferred 0.30 + warning</td><td>30% · review</td></tr>
+  <tr><td>T11</td><td>37 System records missing at the boundary</td><td>undetermined 0.20 + warning</td><td>20% · review</td></tr>
+  <tr><td>—</td><td>Clean stop logged, yet 41 + 6008 on boot</td><td>0.50 + 0.40 = 0.90 (no silent-end bonus: stops were logged) − 0.25 conflict</td><td>65% · warning → review</td></tr>
+  <tr><td>—</td><td>Power loss, records missing at the boundary</td><td>1.20 − 0.30 = 0.90 — strong evidence survives the penalty, but the warning still sends it to review</td><td>90% · review</td></tr>
+</tbody></table>
+<h2>"Needs review", colours and sleeps</h2>
+<ul>
+  <li><b>Needs review</b> = confidence below 60% (<code>review_threshold</code>) <i>or</i> any warning: a conflict, a record gap, an inferred ending, a restart that took over 30 min, a sleep without resume.</li>
+  <li><b>Colour of the percentage</b> in the UI: ≥ 80% green · 60–79% blue · 35–59% amber · below 35% red.</li>
+  <li><b>Sleeps</b> score by how many of their three signals were found — 42 enter, 107 resume, Power-Troubleshooter 1 (or 27 BootType 2 for a hibernate): none 30% · one 60% · two 85% · three 100%. Modern Standby: 90% with both 506 and 507, else 50%. A sleep that never resumed: at most 50%. Demo: S2 (entry not logged) 85%, S3 (Power-Troubleshooter only) 60%, S4 (never resumed) 50%.</li>
+</ul>
+
+<!-- ============================================================ 6 STORPORT -->
+<h1 id="storport"><span class="n">6</span>How Storport and disk events are judged</h1>
+<div class="lead">Each storage event gets a label and a state. The worst state in the minute before the last sign of life decides the drive verdict. Informational events are listed with their fields but never counted.</div>
+<p><b>What Storport is.</b> Storport is Windows' storage port driver. It sits between the disk / file-system layers and the drive's own driver (stornvme for NVMe, storahci for SATA). Its Operational log records problems with individual I/O requests — timeouts, resets, retries, latency — and usually names the drive (vendor, product ID, serial), which makes it the best log for tying a fault to a specific drive.</p>
+<h2>How a state is assigned (first match)</h2>
+<ol>
+  <li><b>Known provider + event ID</b> in the catalogue → a fixed label and state (table below).</li>
+  <li><b>Any other event in a Storport log</b> → state from Windows' own severity: Critical or Error → <i>error</i>, Warning → <i>warning</i>, Information → <i>info</i> (listed, never counted).</li>
+  <li><b>Any other event from a storage provider</b> (name contains stornvme, storahci, storport, nvme, iastor or disk) at Critical, Error or Warning level → state from its severity.</li>
+</ol>
+<div class="callout"><b>Why severity for Storport.</b> Microsoft does not publish a meaning for each Storport Operational event ID, so WELA does not invent one: it uses the severity Windows itself gave the event. Information-level events still appear in the drawer with their key fields (opcode, status, sense data, latency …) so the engineer can read them. Naming the Storport IDs that matter, from real claim logs, is on the roadmap.</div>
+<h2>States, worst first</h2>
+<table class="t">
+  <thead><tr><th style="width:11%">State</th><th>Events (catalogue)</th><th style="width:28%">Read as</th></tr></thead><tbody>
+  <tr><td><span class="chip c-bad">missing</span></td><td>disk 157 — disk surprise removed</td><td>The drive dropped off the bus</td></tr>
+  <tr><td><span class="chip c-bad">reset</span></td><td>stornvme 129, storahci 129, Intel RST / VMD (iaStorAC, iaStorA, iaStorVD) 129 — reset to device</td><td>Windows reset a drive controller that stopped answering</td></tr>
+  <tr><td><span class="chip c-bad">error</span></td><td>disk 7 bad block · 11 controller error · 51 paging I/O error · 52 predicted failure (SMART) · 154 I/O failed; stornvme 11; NTFS 50 delayed write failed · 55 corruption · 98 volume needs repair · 140 failed to flush; volmgr 161; WHEA 18 / 1; Storport errors</td><td>An I/O or the data on the drive failed</td></tr>
+  <tr><td><span class="chip c-warn">slow</span></td><td>disk 153 — I/O retried</td><td>The drive was slow to answer; the I/O had to be retried</td></tr>
+  <tr><td><span class="chip c-warn">warning</span></td><td>WHEA 17 / 19 / 47 corrected errors; volmgr 46; Storport warnings</td><td>Something was wrong but recovered</td></tr>
+  <tr><td><span class="chip c-nd">info</span></td><td>Partition 1006 disk inventory; Storport information</td><td>Listed with its fields, never counted</td></tr>
+</tbody></table>
+<h2>Two refinements</h2>
+<ul>
+  <li><b>Platform vs. drive.</b> WHEA-Logger events report errors in the CPU, PCIe or memory platform — not necessarily in the drive. They stay in the window, but are left out of the <i>drive</i> state, so on their own they can make "Did the drive cause it?" at most <i>Possibly</i>, never <i>Likely</i>.</li>
+  <li><b>Readable commands.</b> NVMe I/O is translated to SCSI commands by stornvme, so Storport events carry SCSI opcodes. WELA decodes them (e.g. 0x2A WRITE(10), 0x35 SYNCHRONIZE CACHE(10), 0x28 READ(10)) so the engineer can see which command failed.</li>
+</ul>
+
+<!-- ============================================================ 7 DRIVE -->
+<h1 id="drive"><span class="n">7</span>Did the drive cause it?</h1>
+<div class="lead">Asked only of hard shutdowns and undetermined power cycles. A PC that shut itself down in order was not brought down by its drive: those get <i>No (orderly)</i>, with a note if drive errors were logged before it.</div>
+<table class="t">
+  <thead><tr><th style="width:17%">Verdict</th><th>When (first match)</th></tr></thead><tbody>
+  <tr><td><span class="chip c-bad">Likely</span></td><td>A <i>missing</i>, <i>reset</i> or <i>error</i> event on the drive in the 60 s before the last sign of life — or a crash code that points at storage (0x7A, 0x77, 0x7B, 0xED, 0xF4)</td></tr>
+  <tr><td><span class="chip c-warn">Possibly</span></td><td>Slow I/O or warnings in that minute, or only platform (WHEA) errors — or a crash code that is sometimes storage (0x24, 0x9F, 0xEF, 0x133, 0x154)</td></tr>
+  <tr><td><span class="chip c-acc">No drive evidence</span></td><td>Logs cover that minute and the drive logged no warning or error</td></tr>
+  <tr><td><span class="chip c-nd">Can't tell</span></td><td>No log covers that minute, or the log starts at this boot</td></tr>
+</tbody></table>
+<p class="small">An undetermined power cycle is held back one step: Likely becomes Possibly, No drive evidence becomes Can't tell — the ending itself is uncertain.</p>
+<div class="grid2 avoid">
+<table class="t compact">
+  <thead><tr><th style="width:17%">Crash code</th><th>Name</th><th style="width:20%">Points at storage</th></tr></thead><tbody>
+  <tr><td class="mono">0x7A</td><td>KERNEL_DATA_INPAGE_ERROR</td><td>strongly</td></tr>
+  <tr><td class="mono">0x77</td><td>KERNEL_STACK_INPAGE_ERROR</td><td>strongly</td></tr>
+  <tr><td class="mono">0x7B</td><td>INACCESSIBLE_BOOT_DEVICE</td><td>strongly</td></tr>
+  <tr><td class="mono">0xED</td><td>UNMOUNTABLE_BOOT_VOLUME</td><td>strongly</td></tr>
+  <tr><td class="mono">0xF4</td><td>CRITICAL_OBJECT_TERMINATION</td><td>strongly</td></tr>
+  <tr><td class="mono">0x24</td><td>NTFS_FILE_SYSTEM</td><td>sometimes</td></tr>
+  <tr><td class="mono">0x9F</td><td>DRIVER_POWER_STATE_FAILURE</td><td>sometimes</td></tr>
+  <tr><td class="mono">0xEF</td><td>CRITICAL_PROCESS_DIED</td><td>sometimes</td></tr>
+  <tr><td class="mono">0x133</td><td>DPC_WATCHDOG_VIOLATION</td><td>sometimes</td></tr>
+  <tr><td class="mono">0x154</td><td>UNEXPECTED_STORE_EXCEPTION</td><td>sometimes</td></tr>
+</tbody></table>
+<div>
+  <p style="margin-top:6px"><b>Why these codes.</b> The "strong" ones mean Windows could not read from or reach its disk (in-page errors, boot device or volume gone) or a critical process was killed — commonly by failed I/O. The "sometimes" ones are often storage-related (a storage driver stuck in a power transition or a DPC) but have other causes too.</p>
+  <p><b>Effect on the drive</b> — the 60 s after boot: <i>Drive missing after boot</i> (157) · <i>Errors</i> (reset / error) · <i>Warnings</i> (slow / warning, or platform only) · <i>Healthy</i> · <i>No data</i>. A drive that is missing or erroring after the boot supports a drive cause.</p>
+</div>
+</div>
+<div class="callout warn"><b>"No drive evidence" is not "healthy".</b> Windows keeps its logs on the system drive. If that drive froze instantly, its last events were never saved — a failing drive can look quiet. WELA says this on every such verdict and asks for the drive's own SMART and error logs.</div>
+<h2>Demo examples</h2>
+<table class="t compact">
+  <thead><tr><th style="width:6%">ID</th><th style="width:22%">Power cycle</th><th>Evidence in the minute before</th><th style="width:16%">Verdict</th></tr></thead><tbody>
+  <tr><td>T5</td><td>Power loss</td><td>2 resets to device (the last 17 s before), 5 I/O retries, 3 Storport warnings — on the Samsung drive</td><td><span class="chip c-bad">Likely</span></td></tr>
+  <tr><td>T8</td><td>Power-button long-press</td><td>3 resets, 2 retries, 3 Storport warnings; a drive event was the last thing logged</td><td><span class="chip c-bad">Likely</span></td></tr>
+  <tr><td>T7</td><td>Crash 0x9F</td><td>4 corrected PCIe errors (WHEA, platform only) + crash code 0x9F</td><td><span class="chip c-warn">Possibly</span></td></tr>
+  <tr><td>T9</td><td>Power lost while asleep</td><td>Logs cover the minute; nothing logged</td><td><span class="chip c-acc">No drive evidence</span></td></tr>
+  <tr><td>T11</td><td>Undetermined (log gap)</td><td>Quiet, but the ending itself is unknown</td><td><span class="chip c-nd">Can't tell</span></td></tr>
+</tbody></table>
+
+<!-- ============================================================ 8 WHICH -->
+<h1 id="which"><span class="n">8</span>Which drive — is it Samsung's?</h1>
+<div class="lead">Every storage event is tied to a physical drive where the logs allow it, and WELA says how sure it is: <i>named</i> and <i>disk number</i> are certain; <i>only drive</i> is marked "probably".</div>
+<table class="t">
+  <thead><tr><th style="width:15%">Method</th><th>How</th><th style="width:24%">Shown as</th></tr></thead><tbody>
+  <tr><td class="k">Named</td><td>The event carries the drive's identity: Storport VendorId / ProductId / SerialNumber, a Partition model, or a PCI vendor ID (<code>VEN_xxxx</code>) in a device path</td><td><span class="chip c-sam">Samsung drive</span> — sure</td></tr>
+  <tr><td class="k">Disk number</td><td>The event names <code>\Device\HarddiskN</code>; the Partition inventory of <i>that same boot</i> says which drive was disk N (numbers can change between boots, e.g. when a USB drive is plugged in)</td><td><span class="chip c-sam">Samsung drive</span> — sure</td></tr>
+  <tr><td class="k">Only drive</td><td>The event names no drive, but that boot (or the whole log) has only one drive, and the event does not point at another disk number</td><td><span class="chip c-samp">Probably the Samsung drive</span></td></tr>
+  <tr><td class="k">Not identified</td><td>None of the above. WHEA platform events are never guessed — their PCIe device can be anything</td><td><span class="chip c-nd">Drive not identified</span></td></tr>
+</tbody></table>
+<ul>
+  <li><b>Samsung is recognised by</b> the word "Samsung" anywhere in the event, PCI vendor ID <code>144D</code>, or a Samsung part number (<code>MZ…</code>, e.g. MZVL2512HCJQ) in a model or product field. Generic vendor strings ("NVMe", "ATA", "SCSI") are ignored.</li>
+  <li><b>Twelve vendors are known</b> (Samsung, Western Digital / SanDisk, SK hynix, Kioxia / Toshiba, Micron / Crucial, Intel / Solidigm, Seagate, Kingston, Phison, Silicon Motion, ADATA, Lite-On), so another drive is named rather than just "not Samsung". Intel and AMD PCI IDs are left out on purpose: they also name the CPU's own PCIe ports.</li>
+  <li><b>One drive, two serial formats</b> (the serial vs. the NVMe EUI-64 some Windows builds report) are merged into one drive.</li>
+  <li>The highlighted vendor is a setting (<code>highlight_vendor</code>); Samsung is highlighted in teal everywhere — UI, timeline, HTML and Excel.</li>
+</ul>
+
+<!-- ============================================================ 9 SOFTWARE -->
+<h1 id="software"><span class="n">9</span>How apps, updates and services are singled out</h1>
+<div class="lead">Four steps: tag the events that matter, read only the right stretch of time, read who asked for the shutdown, then take the strongest explanation first. A request on record beats circumstantial events; a system-process crash beats an ordinary app crash.</div>
+<h2>Step 1 — which events count</h2>
+<table class="t compact">
+  <thead><tr><th style="width:15%">Group</th><th>Events</th></tr></thead><tbody>
+  <tr><td class="k">Apps</td><td>Application Error 1000 (crash) · Application Hang 1002 (hang) · .NET Runtime 1026 (crash) · Windows Error Reporting 1001, read by its event name: BlueScreen → blue-screen report, APPCRASH / BEX → crash report, AppHangB1 → hang report, LiveKernelEvent → kernel problem report</td></tr>
+  <tr><td class="k">System processes</td><td>A crash of csrss, wininit, winlogon, lsass, smss or services.exe → <i>System process crashed</i>: Windows cannot keep running without them</td></tr>
+  <tr><td class="k">Windows Update</td><td>WindowsUpdateClient 43 started · 19 installed · 20 failed · 21 needs a restart · 22 restart scheduled; Servicing 2 installed · 4 needs a restart</td></tr>
+  <tr><td class="k">Installers</td><td>MsiInstaller 1040 / 1042 transaction start / end · 1033–1037, 11707, 11724 done · 11708 failed · 1038 needs a restart · 1005 restarted the PC</td></tr>
+  <tr><td class="k">Services</td><td>Service Control Manager 7031 / 7034 crashed · 7023 / 7024 stopped with an error · 7043 held up shutdown · 7022 hung on start · 7011 timed out. A 7031 whose recovery action is "Restart the computer" → <i>Windows restarts the PC</i></td></tr>
+  <tr><td class="k">System</td><td>Display 4101 driver stopped responding · Resource-Exhaustion 2004 low on memory · Kernel-Power 105 power source changed (on battery / on AC)</td></tr>
+</tbody></table>
+<p class="small">Each event also gets its <b>subject</b> — the app (e.g. explorer.exe), the update (KB number), the installed product or the service — which is what the reasons name.</p>
+<h2>Step 2 — the stretch of time</h2>
+<p>The verdict reads the <b>15 min before the last sign of life</b> and the <b>10 min after the boot</b> — but never back past the boot or wake that ended the previous power cycle, and never on past the next power-off. If the previous power cycle was only 30 s earlier, it reads those 30 s (<i>"… in the 30s since T33 boot"</i>): anything before belongs to that earlier power cycle. The lists under the verdict show everything between the power cycles; problems older than the 15 min are summed up, e.g. <i>"Earlier, since T7 boot: Crash report: blue screen x1"</i>.</p>
+<h2>Step 3 — who asked? The 1074 record</h2>
+<p>User32 1074 is Windows' own record of a shutdown or restart request: <b>param 1</b> the process, <b>3</b> the reason text, <b>4</b> the reason code, <b>5</b> the type, <b>6</b> a comment, <b>7</b> the user.</p>
+<div class="grid2 avoid">
+<div>
+  <p><b>The process → a category</b>, first matching path fragment wins:</p>
+  <ul class="small">
+    <li><b>Windows Update</b> — TrustedInstaller, TiWorker, MoUsoCoreWorker, UsoClient, wuauclt, SetupHost …</li>
+    <li><b>OEM / vendor tool</b> — Dell (dcu-cli, SupportAssist), Lenovo, HP, Samsung Magician, firmware / BIOS updaters</li>
+    <li><b>IT management</b> — SCCM (CcmExec), Intune (OmaDmClient, IntuneManagementExtension, AgentExecutor), Group Policy scripts</li>
+    <li><b>Installer</b> — msiexec, *setup*, *install*; <b>script</b> — shutdown.exe, PowerShell, cmd</li>
+    <li><b>System</b> — wininit, lsass, csrss; <b>user</b> — Explorer, RuntimeBroker, Start menu, Winlogon, LogonUI</li>
+  </ul>
+</div>
+<div>
+  <p><b>The reason code → decoded from its bits</b> — the same in every Windows language: bits 16–23 major reason, bits 0–15 minor reason, top bit = planned.</p>
+  <table class="t compact">
+    <thead><tr><th>Code</th><th>Decodes to</th></tr></thead><tbody>
+    <tr><td class="mono">0x80020003</td><td>planned · Operating System: Upgrade → <b>Windows Update</b></td></tr>
+    <tr><td class="mono">0x00050006</td><td>unplanned · System: Unstable → <b>system unstable</b></td></tr>
+    <tr><td class="mono">0x00000000</td><td>unplanned · Other — a typical user shutdown</td></tr>
+  </tbody></table>
+  <p class="small">When process and code disagree, the code wins for updates: "Update and restart" from the Start menu is asked by the shell, but the code says OS servicing → Windows Update. A system process with an "unstable" code or a "terminated unexpectedly" comment → System process crash.</p>
+</div>
+</div>
+<h2>Step 4 — strongest explanation first, and its percentage</h2>
+<table class="t">
+  <thead><tr><th style="width:20%">Power cycle</th><th>Evidence — first match wins</th><th style="width:15%">Verdict</th><th style="width:20%">Confidence</th></tr></thead><tbody>
+  <tr class="sub"><td colspan="4">Any power cycle</td></tr>
+  <tr><td>A 1074 was logged</td><td>The request itself: who asked, why, for whom</td><td><span class="chip c-sw">Confirmed</span></td><td>0.70; +0.15 if the reason code agrees; +0.15 if update / installer / service events back it</td></tr>
+  <tr class="sub"><td colspan="4">Normal shutdown or restart, no 1074</td></tr>
+  <tr><td></td><td>A service crash with "restart the computer", MSI 1005 or Windows Update 22 in the window</td><td><span class="chip c-sw">Likely</span></td><td>0.60</td></tr>
+  <tr><td>restarts only</td><td>An update or install was waiting for a restart (WU 21, MSI 1038, Servicing 4)</td><td><span class="chip c-acc">Possibly</span></td><td>0.35</td></tr>
+  <tr><td></td><td>None of these</td><td>Not logged</td><td>—</td></tr>
+  <tr class="sub"><td colspan="4">Hard shutdown or undetermined, no 1074 — in this order</td></tr>
+  <tr><td>1</td><td>A system process crashed (csrss, lsass, wininit …)</td><td>Likely with 0xEF / 0xF4, else Possibly</td><td>0.50 (+0.20 with that crash code)</td></tr>
+  <tr><td>2</td><td>A service crashed whose recovery restarts the PC — the restart did not complete</td><td><span class="chip c-sw">Likely</span></td><td>0.60</td></tr>
+  <tr><td>3</td><td>An update or install started in the last hour and had not finished</td><td><span class="chip c-acc">Possibly</span></td><td>0.40</td></tr>
+  <tr><td>4</td><td>Apps or services hung (1002, 7043, 7022, 7011, hang reports)</td><td><span class="chip c-acc">Possibly</span></td><td>0.35</td></tr>
+  <tr><td>5</td><td>Display driver stopped responding (4101)</td><td><span class="chip c-acc">Possibly</span></td><td>0.30</td></tr>
+  <tr><td>6</td><td>An app or service crashed (1000, 1026, crash reports, 7031 / 7034 / 7023 / 7024)</td><td><span class="chip c-acc">Possibly</span></td><td>0.25</td></tr>
+  <tr><td></td><td>Logs cover the window and none of the above</td><td>No software evidence</td><td>—</td></tr>
+  <tr><td></td><td>No log covers it, or the ending is undetermined</td><td>Can't tell</td><td>—</td></tr>
+  <tr class="sub"><td colspan="4">Then, for every verdict that found something</td></tr>
+  <tr><td>Symptom check</td><td>The drive verdict is Likely / Possibly with real drive events before power-off, and the trigger is a crash (system process or app), hang, driver timeout or unfinished update / install</td><td>same, with a note</td><td>−0.15</td></tr>
+</tbody></table>
+<h2>Why this order and these weights</h2>
+<ul>
+  <li><b>1074 (0.70, Confirmed):</b> Windows' own record of who asked — the only direct evidence. The reason code agreeing and backing events (+0.15 each) take it to 100%.</li>
+  <li><b>"Restarts the PC" events (0.60, Likely):</b> the component says it is restarting the PC, but without a 1074 the request itself is not on record — so Likely, never Confirmed.</li>
+  <li><b>System process crash (0.50, +0.20):</b> Windows is built to stop when csrss, wininit or lsass die (crash codes 0xEF / 0xF4) — a direct chain; with the matching code it becomes Likely.</li>
+  <li><b>Unfinished update (0.40):</b> power lost mid-install is a known risk, but the update may only have been running at the time.</li>
+  <li><b>Hang (0.35):</b> a PC that stops responding is often forced off with the power button — it fits the <i>long-press</i> subtype.</li>
+  <li><b>Display driver (0.30):</b> graphics-driver timeouts often come just before a freeze.</li>
+  <li><b>App crash (0.25):</b> an ordinary app crash cannot take Windows down by itself — it shows what was failing at the time. That is why <i>App crashed</i> is never more than Possibly.</li>
+  <li><b>Symptom check (−0.15):</b> a drive that stalls makes apps hang and crash. When the drive was also failing, the software events are more likely effects than causes, and the reason says so.</li>
+</ul>
+<h2>Worked examples</h2>
+<table class="t">
+  <thead><tr><th style="width:6%">ID</th><th style="width:30%">Shown</th><th>Calculation</th></tr></thead><tbody>
+  <tr><td>T3</td><td><span class="chip c-sw">Windows Update</span> Confirmed · 100%</td><td>0.70 (1074 by TrustedInstaller.exe) + 0.15 (reason 0x80020003 = OS upgrade agrees) + 0.15 (WU 43 → 19 → 21 for KB5099001 before it)</td></tr>
+  <tr><td>T16</td><td><span class="chip c-sw">System process crash</span> Confirmed · 100%</td><td>0.70 (1074 by wininit.exe) + 0.15 (0x50006 System: unstable agrees) + 0.15 (lsass.exe crashed 20 s before)</td></tr>
+  <tr><td>T2</td><td><span class="chip c-sw">User request</span> Confirmed · 85%</td><td>0.70 (1074 by RuntimeBroker.exe — the Start menu) + 0.15 (reason 0x0 fits a user shutdown); nothing to back it up</td></tr>
+  <tr><td>T13</td><td><span class="chip c-sw">Software installer</span> Likely · 60%</td><td>MsiInstaller 1005 "restarted the PC" for DEMO Tools 1 min before; no 1074</td></tr>
+  <tr><td>T15</td><td><span class="chip c-acc">Update was installing</span> Possibly · 40%</td><td>WU 43 started KB5099002 and never finished — the last thing logged</td></tr>
+  <tr><td>T7</td><td><span class="chip c-acc">App crashed</span> Possibly · 25%</td><td>demo.exe crashed before a 0x9F crash; the drive verdict found only platform errors, so no symptom deduction</td></tr>
+  <tr><td>T8</td><td><span class="chip c-acc">Apps / services hung</span> Possibly · 20%</td><td>0.35 (explorer.exe and an editor hung) − 0.15 (the Samsung drive was resetting at the same time)</td></tr>
+  <tr><td>—</td><td><span class="chip c-acc">App crashed</span> Possibly · 10%</td><td>0.25 − 0.15: an app crashed and the drive had problems too — the crash is probably a symptom</td></tr>
+</tbody></table>
+<p class="small">Shown with every verdict as context, without changing its score: an update waiting for a restart since earlier in the session; the PC running on battery (Kernel-Power 105); a blue-screen report or an update finishing after the boot; services that held up a hung shutdown (7043); older problems since the previous power cycle.</p>
+
+<!-- ============================================================ 10 QUALITY -->
+<h1 id="quality"><span class="n">10</span>Data quality — when the logs themselves are suspect</h1>
+<div class="lead">Before trusting any verdict, WELA checks the logs. Where they are incomplete it lowers confidence or refuses to guess.</div>
+<table class="t">
+  <thead><tr><th style="width:21%">Check</th><th>How</th><th style="width:36%">Effect</th></tr></thead><tbody>
+  <tr><td class="k">Missing logs</td><td>System, Application and Storport are expected</td><td>Warning; verdicts say what was not checked (e.g. "only System-log disk events checked")</td></tr>
+  <tr><td class="k">Unreadable files</td><td>Each file is read on its own</td><td>Listed with the reason; the rest of the analysis continues</td></tr>
+  <tr><td class="k">Missing records</td><td>Gaps in record IDs, per file and log</td><td>Power cycles at a gap → Undetermined (20%) or −0.30 with a warning</td></tr>
+  <tr><td class="k">Cleared logs</td><td>Eventlog 104 / 1102</td><td>Warning, with the time and who cleared it</td></tr>
+  <tr><td class="k">Clock changes</td><td>Kernel-General 1 with a jump of 5 min or more, not within 3 min of a boot</td><td>Listed with the process that changed the clock</td></tr>
+  <tr><td class="k">Time going backwards</td><td>Record order vs. timestamps, more than 60 s</td><td>Warning</td></tr>
+  <tr><td class="k">Quiet gaps</td><td>2 h or more with no events inside a session and no sleep</td><td>Info: possibly an unlogged sleep — or an idle PC</td></tr>
+  <tr><td class="k">Storport coverage</td><td>Is there Storport data for each drive window?</td><td>A note on each verdict where only System-log disk events were checked</td></tr>
+</tbody></table>
+
+<!-- ============================================================ 11 ENGINEERING -->
+<h1 id="eng"><span class="n">11</span>Engineering facts</h1>
+<table class="t">
+  <thead><tr><th style="width:20%">Area</th><th>Fact</th></tr></thead><tbody>
+  <tr><td class="k">Stack</td><td>Python 3.9+ standard library only (3,207 lines); <code>.evtx</code> read with Windows' own wevtutil — nothing to install. The UI is a local web page in plain JavaScript and CSS (1,174 lines), no frameworks, no CDN, works offline.</td></tr>
+  <tr><td class="k">Privacy</td><td>The local server binds to 127.0.0.1 only; no network calls; cases are saved under <code>./cases</code> on the engineer's PC. Customer logs never leave the machine.</td></tr>
+  <tr><td class="k">Determinism</td><td>Same logs + same catalogue → same verdicts. No randomness, no model, no internet lookups.</td></tr>
+  <tr><td class="k">Configurable</td><td>Every event ID, weight, window and vendor rule is in <code>wela/catalog.py</code>; <code>wela_config.json</code> overrides any of it. The drive window, trigger window, restart gap, review line and quiet-gap length are also in the UI's <i>Analysis settings</i>.</td></tr>
+  <tr><td class="k">Outputs</td><td>HTML report, Excel workbook (written directly as Office Open XML — no library), CSV, JSON; a command line for batch runs; the full result is saved as one JSON per case.</td></tr>
+  <tr><td class="k">Tests (52)</td><td>Demo scenario with known answers (16 power cycles, 5 sleeps) · 10; power-cycle rules · 13; which drive · 10; software trigger · 16; folder selection · 2; robustness — 30 rounds of up to 400 random, malformed events through the engine and every export · 1.</td></tr>
+  <tr><td class="k">Speed (analysis step, laptop)</td><td>19,640 events / 640 power cycles in 0.21 s · 98,200 / 3,200 in 1.55 s · 196,400 / 6,400 in 4.41 s. Reading <code>.evtx</code> with wevtutil adds time in proportion to file size.</td></tr>
+</tbody></table>
+
+<!-- ============================================================ 12 LIMITS -->
+<h1 id="limits"><span class="n">12</span>Limits — and what to say</h1>
+<table class="t">
+  <thead><tr><th style="width:29%">Limit</th><th>What to say</th></tr></thead><tbody>
+  <tr><td class="k">Validated on synthetic logs so far</td><td>Every rule is tested against a demo case with known answers. Next: 20–30 closed claims with known outcomes, and lab PCs where each kind of power cycle is caused on purpose (pull the plug, hold the button, force a crash, sleep and wake).</td></tr>
+  <tr><td class="k">Weights are set by hand</td><td>Set from how directly Windows records each event; the closed-claim set will calibrate them. They can be retuned without code.</td></tr>
+  <tr><td class="k">The logs live on the suspect drive</td><td>A drive that froze may never have saved its last events, so "No drive evidence" is not "healthy". Cross-check with the drive's SMART and error logs.</td></tr>
+  <tr><td class="k">Storport is judged by severity</td><td>Its event IDs have no published meanings; WELA uses the severity Windows gave them and shows every field. Naming the important IDs from real logs is next.</td></tr>
+  <tr><td class="k">"Probably" drive attributions</td><td>Unnamed events are only attributed when one drive exists, and are labelled. Adding the Partition log turns more of them into certain matches.</td></tr>
+  <tr><td class="k">Who asked is not always logged</td><td>No 1074 → "Not logged"; restart vs. shutdown then comes from the 5-min gap, flagged as inferred.</td></tr>
+  <tr><td class="k">Scope</td><td>Rules report evidence and patterns; they do not replace failure analysis of the drive. One PC per case; Windows event logs only — no minidumps or SMART import yet.</td></tr>
+</tbody></table>
+
+<!-- ============================================================ 13 QA -->
+<h1 id="qa"><span class="n">13</span>Questions to expect</h1>
+<div class="qcols">
+  <div class="qa"><span class="qq">Does 100% confidence mean it is certain?</span>No. It means all the evidence Windows normally writes for that kind of ending is there and nothing contradicts it. It is an evidence score, capped at 100%, not a probability. Calibration on closed claims is the next step.</div>
+  <div class="qa"><span class="qq">Where do the weights come from?</span>From how directly each event records the ending: the kernel's own 41 (0.50) above the event log's 6008 (0.40) above a crash report (0.20). They are set so one weak signal stays under the 60% review line and two independent ones pass. They are in the catalogue and can be tuned without code.</div>
+  <div class="qa"><span class="qq">How do you know it is right?</span>52 automated tests pin every rule, including a demo case of 16 power cycles and 5 sleeps with known answers and a random-input test. Validation on 20–30 closed claims and lab tests is next.</div>
+  <div class="qa"><span class="qq">Could it wrongly blame our drive?</span>"Likely" needs a reset, error or missing-drive event on the drive in the minute before power-off, or a crash code that points at storage. Platform (WHEA) errors alone stop at Possibly; orderly shutdowns are never blamed; undetermined ones are held back a step. And it says whose drive it was.</div>
+  <div class="qa"><span class="qq">Could it miss a drive fault?</span>Yes, if the system drive froze before writing its last events. That is why a quiet minute is "No drive evidence", not "healthy", and why every such verdict asks for SMART data.</div>
+  <div class="qa"><span class="qq">Why 60 seconds for the drive?</span>Faults that bring a PC down show up seconds before it (in the demo, 32 s and 17 s). A wider window pulls in unrelated noise. It is a setting and can be widened per analysis.</div>
+  <div class="qa"><span class="qq">Why 15 minutes for software?</span>Long enough for an install or a hang that builds up, short enough to keep a causal link. It never reaches past the previous power cycle; older events are still listed and summed up.</div>
+  <div class="qa"><span class="qq">What does "App crashed · Possibly 25%" mean?</span>An app crashed in that window and nothing stronger was found. 25% is the crash weight: an ordinary app crash cannot take Windows down, it shows what was failing. If the drive was failing too, 0.15 comes off — 10%.</div>
+  <div class="qa"><span class="qq">How do you know who shut the PC down?</span>User32 1074 records the process, the user, a reason code and a comment. The process maps to a category (Windows Update, vendor tool, IT management, user …) and the reason code is decoded from its bits, which are the same in every Windows language.</div>
+  <div class="qa"><span class="qq">And if there is no 1074?</span>Then "Not logged" — unless an installer, update or service says it restarted the PC (Likely) or an update was waiting for a restart (Possibly). Restart vs. shutdown then comes from the gap, flagged.</div>
+  <div class="qa"><span class="qq">What is Storport, and how is it judged?</span>Windows' storage port driver; its log records problems with individual I/O requests and usually names the drive. Its event IDs have no published meanings, so WELA uses Windows' own severity and lists information-level events with their fields without counting them.</div>
+  <div class="qa"><span class="qq">How is the Samsung drive identified?</span>By name, PCI vendor ID 144D or an MZ… part number in the event; by disk number through that boot's Partition inventory; or — marked "probably" — because it was the only drive.</div>
+  <div class="qa"><span class="qq">What if the clock or time zone is wrong?</span>Everything is compared in UTC; the display zone is a choice. Clock changes of 5 min or more are flagged with the process that made them, and time going backwards is flagged.</div>
+  <div class="qa"><span class="qq">What if logs were cleared or records are missing?</span>Both are detected (104 / 1102, record-ID gaps). Power cycles at a gap become Undetermined or lose 30% with a warning, and go to review.</div>
+  <div class="qa"><span class="qq">Is customer data safe?</span>It runs entirely on the engineer's PC, serves the UI on 127.0.0.1, makes no network calls and needs no installs.</div>
+  <div class="qa"><span class="qq">Does it scale?</span>196,400 events and 6,400 power cycles analyse in about 4.4 s on a laptop.</div>
+  <div class="qa"><span class="qq">Why rules and not machine learning?</span>Claim decisions need answers that are explainable and repeatable, and there is no labelled set of claims to train on yet. Rules can be audited line by line. AI fits on top — writing claim summaries from WELA's results — not in place of the rules.</div>
+  <div class="qa"><span class="qq">Can the rules change without a developer?</span>Yes: event IDs, weights, windows and vendor rules are data in the catalogue, overridable with <code>wela_config.json</code>; the main windows are also in the UI's settings.</div>
+  <div class="qa"><span class="qq">Why "Possibly" so often?</span>Because the logs rarely prove a software cause; WELA only says "Likely" or "Confirmed" when Windows recorded the request or the component said it restarted the PC.</div>
+  <div class="qa"><span class="qq">What does it not do?</span>No minidump analysis, no SMART import, one PC per case. Those are on the roadmap.</div>
+</div>
+
+<!-- ============================================================ A NUMBERS -->
+<h1 id="numbers" class="pg"><span class="n">A</span>Every number in one place</h1>
+<div class="lead">The defaults in <code>wela/catalog.py</code>. Any of them can be overridden in <code>wela_config.json</code>.</div>
+<div class="grid2">
+<table class="t compact">
+  <thead><tr><th>Setting</th><th style="width:18%">Default</th></tr></thead><tbody>
+  <tr><td>boot_cluster_s — boot markers within this = one boot</td><td class="n">180 s</td></tr>
+  <tr><td>boot_window_s — read 41 / 6008 / 1001 after boot</td><td class="n">900 s</td></tr>
+  <tr><td>tail_window_s — read stop signals before the last event</td><td class="n">1,800 s</td></tr>
+  <tr><td>restart_gap_s — stop → boot below this = restart</td><td class="n">300 s</td></tr>
+  <tr><td>long_restart_gap_s — restart that took longer → flag</td><td class="n">1,800 s</td></tr>
+  <tr><td>drive_window_s — drive window before / after</td><td class="n">60 s</td></tr>
+  <tr><td>software_window_s — trigger verdict reads before</td><td class="n">900 s</td></tr>
+  <tr><td>software_after_s — … and after boot</td><td class="n">600 s</td></tr>
+  <tr><td>software_list_max — app / update events per list</td><td class="n">100</td></tr>
+  <tr><td>running_lookback_s — update / install still running</td><td class="n">3,600 s</td></tr>
+  <tr><td>pt1_merge_s — Power-Troubleshooter 1 joins a resume</td><td class="n">300 s</td></tr>
+  <tr><td>unexplained_gap_s — quiet gap worth flagging</td><td class="n">7,200 s</td></tr>
+  <tr><td>time_change_flag_s — clock jump worth flagging</td><td class="n">300 s</td></tr>
+  <tr><td>review_threshold — below this = needs review</td><td class="n">0.60</td></tr>
+</tbody></table>
+<div>
+<table class="t compact">
+  <thead><tr><th>Trigger weight</th><th style="width:18%">Value</th></tr></thead><tbody>
+  <tr><td>initiator — 1074 names who asked</td><td class="n">0.70</td></tr>
+  <tr><td>reason_agrees — the reason code agrees</td><td class="n">+0.15</td></tr>
+  <tr><td>supporting_events — events back it up</td><td class="n">+0.15</td></tr>
+  <tr><td>restart_logged — "restarts the PC", no 1074</td><td class="n">0.60</td></tr>
+  <tr><td>restart_pending — waiting for a restart</td><td class="n">0.35</td></tr>
+  <tr><td>critical_crash — system process crashed</td><td class="n">0.50</td></tr>
+  <tr><td>critical_bugcheck — … with 0xEF / 0xF4</td><td class="n">+0.20</td></tr>
+  <tr><td>work_in_progress — update / install unfinished</td><td class="n">0.40</td></tr>
+  <tr><td>hang — apps or services hung</td><td class="n">0.35</td></tr>
+  <tr><td>driver — display driver timeout</td><td class="n">0.30</td></tr>
+  <tr><td>crash — an app crashed</td><td class="n">0.25</td></tr>
+  <tr><td>drive_conflict — drive also failing</td><td class="n">−0.15</td></tr>
+</tbody></table>
+<p class="small">Power-cycle weights and penalties: chapter 5. Sleep scores: 30 / 60 / 85 / 100% by signals found; Modern Standby 90% or 50%; never resumed ≤ 50%.</p>
+</div>
+</div>
+</body>
+</html>
