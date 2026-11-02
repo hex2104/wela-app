@@ -107,7 +107,9 @@ Partition and Setup are not read from a folder: add them as files of their own.
    its boot / wake) and from **this one to the next** (until its power-off / sleep), so a cause that started hours
    earlier is still there; one power cycle's "after" list is the next one's "before" list. Each list opens at the end
    nearest the power cycle with the 100 nearest events (`software_list_max`); **Show … earlier / later events** loads
-   the rest. Problems older than the verdict window are summed up as *"Earlier, since T4 boot: …"*.
+   the rest. Problems older than the verdict window are summed up as *"Earlier, since T4 boot: …"*. The verdict never
+   reads past the list: if the power cycle before is less than 15 min away, it reads only the time since that boot /
+   wake (*"… in the 30s since T33 boot"*), so a crash before T33 is not blamed on T34.
 9. **Confidence** is the sum of evidence weights, minus penalties for conflicts and log gaps.
    Anything below 0.6, or with a warning, is marked **Needs review**.
 10. **Search**: the Power cycles, Drive and Apps & updates tabs and the detail panel have a search box. A number finds

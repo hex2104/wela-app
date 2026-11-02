@@ -457,6 +457,18 @@ class SoftwareTrigger(unittest.TestCase):
         self.assertEqual((sw["trigger"], sw["strength"]), ("crash", "possible"))   # only 09:50 is within the 15 min
         self.assertIn("Earlier, since T1 boot: Application crashed x3", sw["reasons"])
 
+    def test_verdict_stops_at_the_power_cycle_before(self):
+        # a crash before T2; the PC then runs 50 s after T2's boot and loses power again (T3)
+        evs = hard_cycle([app("2026-01-01T09:55:00Z", "Application Error", 1000, AppName="demo.exe")],
+                         [ev("2026-01-01T10:05:50Z", "Service Control Manager", 7036)])
+        r = run(evs + boot("2026-01-01T10:09:00Z") + [ev("2026-01-01T10:09:20Z", KP, 41, BugcheckCode=0)])
+        t2, t3 = (t["software"] for t in transitions(r)[1:])
+        self.assertEqual((t2["trigger"], t2["after"]["until"], t2["after"]["total"]), ("crash", "T3", 0))
+        # T3's list starts at T2's boot and is empty, so the crash before T2 is not T3's trigger
+        self.assertEqual((t3["before"]["since"], t3["before"]["total"], t3["trigger"]), ("T2", 0, "none"))
+        self.assertTrue(t3["reasons"][0].startswith("No app crash or hang, failed update or service failure in the 50s since T2 boot"))
+        self.assertFalse(any("demo.exe" in x for x in t3["reasons"]))
+
     def test_quiet_app_log_and_battery_context(self):
         s = self.sw(hard_cycle([ev("2026-01-01T09:00:00Z", KP, 105, AcOnline="false"), app("2026-01-01T09:30:00Z", "Demo", 1, level=4)]))
         self.assertEqual((s["trigger"], s["strength"]), ("none", "none"))

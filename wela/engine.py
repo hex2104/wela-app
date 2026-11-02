@@ -1169,7 +1169,8 @@ class Analyzer:
         """What triggered it on the software side, from the 1074 request and the app / update / service events.
 
         The verdict reads the software_window_s before power-off / sleep and the software_after_s after boot / wake;
-        the lists shown with it run back to the power cycle before and on to the one after (see _spans)."""
+        the lists shown with it run back to the power cycle before and on to the one after (see _spans).
+        The verdict never reads past those ends: what came before the power cycle before belongs to that one."""
         s, W = self.s, self.cfg["weights"]["software"]
         win, after_s = s["software_window_s"], s["software_after_s"]
         t_off = it["start_ts"] if sleep else it["last_alive_ts"]
@@ -1177,25 +1178,30 @@ class Analyzer:
         (t_since, since), (t_until, until) = bounds
         pre_all, pre = self._sw_window(min(t_since, t_off), t_off + 5, t_off, since=since) if t_off else ([], None)
         post = self._sw_window(t_on, max(t_until, t_on), t_on, until=until)[1] if t_on else None
-        pre_ev = self._software_between(t_off - win, t_off + 5) if t_off else []
-        post_ev = self._software_between(t_on, t_on + after_s) if t_on else []
-        app_covered = bool(t_off) and self._covered("application", t_off - win, t_off)
+        t0 = max(t_off - win, t_since) if t_off else None
+        t1 = min(t_on + after_s, t_until) if t_on else None
+        pre_ev = self._software_between(t0, t_off + 5) if t_off else []
+        post_ev = self._software_between(t_on, t1) if t_on else []
+        app_covered = bool(t_off) and self._covered("application", t0, t_off)
         off, on = ("sleep", "wake") if sleep else ("power-off", "boot")
-        span = _span(win)
+        since_txt = f"{since} {'wake' if since.startswith('S') else 'boot'}" if since else "the start of the log"
+        # "15 min before power-off", or "30s since T33 boot" when the power cycle before is closer than that
+        read = f"{_span(win)} before {off}" if not t_off or t0 <= t_off - win else f"{_fmt_dur(t_off - t0)} since {since_txt}"
+        read_after = (f"{_span(after_s)} after {on}" if not (t_on and until) or t1 >= t_on + after_s
+                      else f"{_fmt_dur(t1 - t_on)} after {on}, until {until}")
         sw = {"before": pre, "after": post, "window_s": win, "initiator": None, "pending": None, "running": None}
         it["software"] = sw
         tail = []
         if pre is not None:
-            counts, earlier = _problems(pre_ev), _problems(e for e in pre_all if e.ts < t_off - win)
-            tail.append(f"{span} before {off}: {_counts_text(counts)}" if counts else
-                        f"No app crash or hang, failed update or service failure in the {span} before {off}"
+            counts, earlier = _problems(pre_ev), _problems(e for e in pre_all if e.ts < t0)
+            tail.append(f"{read}: {_counts_text(counts)}" if counts else
+                        f"No app crash or hang, failed update or service failure in the {read}"
                         + ("" if app_covered else " (no Application log for this time - only System-log events checked)"))
             if earlier:   # older than the verdict reads, but since the PC last came on
-                since_txt = f"{since} {'wake' if since.startswith('S') else 'boot'}" if since else "the start of the log"
                 tail.append(f"Earlier, since {since_txt}: {_counts_text(earlier)}")
         post_counts = _problems(post_ev)
         if post_counts:
-            tail.append(f"{_span(after_s)} after {on}: {_counts_text(post_counts)}")
+            tail.append(f"{read_after}: {_counts_text(post_counts)}")
         if sleep:
             sw.update(trigger="n/a", label="n/a", strength="n/a", strength_label="n/a", confidence=None, reasons=tail)
             return
@@ -1217,8 +1223,9 @@ class Analyzer:
         def what(e):
             return e.software["label"] + (f": {e.software['subject']}" if e.software["subject"] else "")
 
-        def ago(e):
-            return f"{_fmt_dur(t_off - e.ts)} before {off}" if e.ts < t_off - 0.5 else "the last thing logged"
+        def ago(e):   # a pending update or the battery state can be older than a sleep: say which list has it
+            return (f"{_fmt_dur(t_off - e.ts)} before {off}" if e.ts < t_off - 0.5 else "the last thing logged") \
+                + (f", logged before {since}" if since and e.ts < t_since else "")
 
         def names(evs):
             return ", ".join(sorted({e.software["subject"] or e.software["label"] for e in evs}))[:200]
@@ -1266,7 +1273,7 @@ class Analyzer:
         elif pre is None:
             reasons.append("The log has nothing before this boot, so what led up to it can't be checked")
         else:
-            covered = app_covered or self._covered("system", t_off - win, t_off)
+            covered = app_covered or self._covered("system", t0, t_off)
             crit, svc, drv = has("app", "critical"), has("service", "reboot"), has("system", "driver")
             hangs = has("app", "hang") + has("service", "hang")
             crashes = has("app", "crash") + has("service", "crash")
@@ -1301,7 +1308,7 @@ class Analyzer:
                 tail = [f"How this session ended is undetermined ({it['subtype'].lower()}), "
                         f"so a quiet log here proves nothing"] + tail
             else:
-                tail = [f"No Application or System log covers the {span} before {off}"]
+                tail = [f"No Application or System log covers the {read}"]
             if typ == "unknown" and strength == "likely":
                 strength = "possible"
             pw = [e for e in self._software_between(sess0, t_off + 5) if e.software["kind"] == "power" and e.software["subject"]]

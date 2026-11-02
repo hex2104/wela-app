@@ -107,7 +107,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
     <div><b>Question 3</b>Which drive — is it the Samsung drive?</div>
     <div><b>Question 4</b>What triggered it — an app, an update, the user?</div>
   </div>
-  <div class="meta"><span>Version 0.1.0</span><span>Branch <b>main</b></span><span>1 November 2026</span><span>Prepared by Hitesh Kumar</span></div>
+  <div class="meta"><span>Version 0.1.0</span><span>Branch <b>main</b></span><span>2 November 2026</span><span>Prepared by Hitesh Kumar</span></div>
 </section>
 
 <!-- ============================================================ CONTENTS -->
@@ -126,7 +126,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
   <a href="#quality"><span>11</span><div>Data-quality checks<small>Gaps, cleared logs, clock changes</small></div></a>
   <a href="#tour"><span>12</span><div>Tour of the application<small>Every screen, with what to point out</small></div></a>
   <a href="#exports"><span>13</span><div>Exports and command line<small>HTML, Excel, CSV, JSON, CLI</small></div></a>
-  <a href="#testing"><span>14</span><div>Quality, testing and performance<small>51 tests, robustness, speed</small></div></a>
+  <a href="#testing"><span>14</span><div>Quality, testing and performance<small>52 tests, robustness, speed</small></div></a>
   <a href="#config"><span>15</span><div>Configuration and tuning<small>catalog.py and wela_config.json</small></div></a>
   <a href="#limits"><span>16</span><div>Limitations — and what to say<small>Honest caveats with mitigations</small></div></a>
   <a href="#demo"><span>17</span><div>Demo script and likely questions<small>15-minute run-through, Q&amp;A</small></div></a>
@@ -162,7 +162,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
   <div class="tile"><b>0 installs</b><span>Python standard library only; <code>.evtx</code> read with Windows' own <code>wevtutil</code></span></div>
   <div class="tile" style="--c:var(--ok)"><b>100 % local</b><span>UI served on 127.0.0.1 only; no internet; no data leaves the PC</span></div>
   <div class="tile" style="--c:var(--purple)"><b>~4.7 s</b><span>to analyse ~200,000 events (6,400 power cycles) — analysis step, measured on a laptop</span></div>
-  <div class="tile" style="--c:var(--sam)"><b>51 tests</b><span>rule tests, a full demo scenario with known answers, and a random-input robustness test</span></div>
+  <div class="tile" style="--c:var(--sam)"><b>52 tests</b><span>rule tests, a full demo scenario with known answers, and a random-input robustness test</span></div>
   <div class="tile" style="--c:var(--warn)"><b>Every verdict</b><span>lists the events found, the expected events not logged, its reasons and a confidence score</span></div>
   <div class="tile" style="--c:var(--bad)"><b>4 export formats</b><span>HTML report, Excel workbook (7 sheets), CSV and JSON</span></div>
 </div>
@@ -249,13 +249,13 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
   <thead><tr><th style="width:24%">File</th><th>Responsibility</th><th style="width:9%">Lines</th></tr></thead><tbody>
   <tr><td class="mono">wela/parser.py</td><td>Reads <code>.evtx</code> (wevtutil, then PowerShell, then the optional python-evtx package on non-Windows) and XML exports into one normalised event record: UTC time, log, provider, event ID, record ID, level, data fields. From a folder it picks only System, Application and Storport (Operational, Health).</td><td>236</td></tr>
   <tr><td class="mono">wela/catalog.py</td><td>The knowledge base: every power signal, storage and software event ID, evidence weight, threshold, crash code, vendor rule and shutdown-initiator pattern.</td><td>282</td></tr>
-  <tr><td class="mono">wela/engine.py</td><td>The analysis pipeline (chapter 5): from timeline to verdicts, confidence, drive identity, software trigger and the app / update lists.</td><td>1,470</td></tr>
+  <tr><td class="mono">wela/engine.py</td><td>The analysis pipeline (chapter 5): from timeline to verdicts, confidence, drive identity, software trigger and the app / update lists.</td><td>1,477</td></tr>
   <tr><td class="mono">wela/report.py</td><td>Self-contained HTML report, Excel workbook written directly as Office Open XML (no library), CSV and JSON.</td><td>406</td></tr>
   <tr><td class="mono">wela/server.py</td><td>Local HTTP server and JSON API; native file / folder picker.</td><td>232</td></tr>
   <tr><td class="mono">wela/store.py</td><td>Saves each case under <code>./cases/&lt;id&gt;</code> (result JSON + compressed events for the "context" viewer).</td><td>84</td></tr>
   <tr><td class="mono">wela/demo.py</td><td>Synthetic demo logs covering every tricky scenario, with the expected answers the tests check.</td><td>312</td></tr>
-  <tr><td class="mono">web/ (app.js, app.css, index.html)</td><td>The UI — vanilla JavaScript and CSS, no frameworks or CDN, works offline; light and dark themes.</td><td>1,173</td></tr>
-  <tr><td class="mono">tests/test_engine.py</td><td>51 automated tests (chapter 14).</td><td>535</td></tr>
+  <tr><td class="mono">web/ (app.js, app.css, index.html)</td><td>The UI — vanilla JavaScript and CSS, no frameworks or CDN, works offline; light and dark themes.</td><td>1,174</td></tr>
+  <tr><td class="mono">tests/test_engine.py</td><td>52 automated tests (chapter 14).</td><td>547</td></tr>
 </tbody></table>
 
 <h2>Technology choices — and why</h2>
@@ -306,7 +306,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
   <tr><td>6</td><td class="k">Which drive</td><td>Each storage event is tied to a physical drive (chapter 9).</td><td>"Reset to device" is only meaningful if we know whose device.</td></tr>
   <tr><td>7</td><td class="k">Sleep</td><td>Sleep, hibernate and Modern Standby episodes rebuilt from 42 / 107 / Power-Troubleshooter 1 / 506 / 507 / 27.</td><td>Any one of them is enough to rebuild an episode.</td></tr>
   <tr><td>8</td><td class="k">Classify</td><td>For every boot: how did the previous session end, with a confidence score (chapters 6–7).</td><td>The core answer to question 1.</td></tr>
-  <tr><td>9</td><td class="k">Correlate</td><td>Drive window: 60 s before the last logged event and 60 s after boot. App / update lists: from the power cycle before to this one, and from this one to the next; the trigger verdict reads the 15 min before and the 10 min after.</td><td>Cause shows before power-off; effect after boot; a slow cause can start long before.</td></tr>
+  <tr><td>9</td><td class="k">Correlate</td><td>Drive window: 60 s before the last logged event and 60 s after boot. App / update lists: from the power cycle before to this one, and on to the next; the trigger verdict reads 15 min before and 10 min after, inside those lists.</td><td>Cause shows before power-off; effect after boot; a slow cause can start long before.</td></tr>
   <tr><td>10</td><td class="k">Assess</td><td>Did the drive cause it? Effect on the drive. Which drive had the problems. What triggered it (software).</td><td>Questions 2, 3 and 4.</td></tr>
   <tr><td>11</td><td class="k">Data quality</td><td>Big clock changes, long unexplained quiet gaps inside a session.</td><td>Context for reviewers (chapter 11).</td></tr>
   <tr><td>12</td><td class="k">Result</td><td>Counts, power-cycle list, storage and software event lists, disk inventory, integrity report — saved as one JSON per case.</td><td>Feeds UI, reports, CLI and, later, AI.</td></tr>
@@ -625,7 +625,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
     <ul>
       <li>One power cycle's "after" list is the next one's "before" list — the same stretch, opened from the other end.</li>
       <li>A sleep that never resumed ends no stretch: the hard shutdown after it lists everything since the wake before.</li>
-      <li>Problems older than the verdict window are summed up in the reasons, e.g. <i>"Earlier, since T7 boot: Crash report: blue screen x1"</i> (T8).</li>
+      <li>The verdict reads at most 15 min of the list, never past its start (<i>"… in the 30s since T33 boot"</i>): a crash before T33 is not blamed on T34. Older problems are summed up, e.g. <i>"Earlier, since T7 boot: Crash report: blue screen x1"</i> (T8).</li>
       <li>The search box at the top of the drawer finds an event ID in every list of the power cycle, including events not loaded yet.</li>
     </ul>
     <div class="callout"><b>A count cap, not a time cap.</b> Each list loads the 100 events nearest the power cycle (<code>software_list_max</code>), however old; <b>Show … earlier / later events</b> loads the rest of the stretch from the case's saved events (up to 5,000), and the rows on screen stay where they are. A time cap — say the last hour — would hide exactly the slow causes these lists are for; a count cap keeps the drawer fast even in a crash loop of thousands of events, and nothing is out of reach.</div>
@@ -720,13 +720,13 @@ python -m unittest discover -s tests -v</pre>
 
 <!-- ============================================================ 14 TESTING -->
 <h1 id="testing"><span class="n">14</span>Quality, testing and performance</h1>
-<div class="lead">51 automated tests pin down every rule; a demo case with known answers checks the whole pipeline; a random-input test checks it never crashes.</div>
+<div class="lead">52 automated tests pin down every rule; a demo case with known answers checks the whole pipeline; a random-input test checks it never crashes.</div>
 <table class="t">
   <thead><tr><th style="width:24%">Test group</th><th style="width:9%">Tests</th><th>What it proves</th></tr></thead><tbody>
   <tr><td class="k">Demo scenario</td><td>10</td><td>All 4 demo logs parse; all 16 power cycles and 5 sleeps get the expected verdict; drive cause/effect, Samsung attribution, software triggers, the app / update lists from one power cycle to the next, data-quality findings and all four exports are as expected.</td></tr>
   <tr><td class="k">Power-cycle rules</td><td>13</td><td>Clean shutdown with 6006 missing, restart inferred from gap, Fast Startup, every 41 subtype, hang during shutdown, silent end with low confidence, sleep rebuilt from Power-Troubleshooter 1 only, drive verdicts, XML parsing.</td></tr>
   <tr><td class="k">Which drive</td><td>10</td><td>Storport naming, Samsung part number without the name, other vendors, disk-number mapping, <b>disk numbers that swap between boots</b>, "only drive" inference, no-inventory rule, WHEA never guessed, serial formats merged, configurable vendor.</td></tr>
-  <tr><td class="k">Software trigger</td><td>15</td><td>Reason-code decoding, user / Windows Update / "Update and restart" / vendor tools / installer, service-recovery restart, no-1074 cases, system-process crash, hang as symptom, update still installing, shutdown requested but hung, battery note, named and unnamed event fields; lists keep the nearest events and sum up older problems.</td></tr>
+  <tr><td class="k">Software trigger</td><td>16</td><td>Reason-code decoding, user / Windows Update / "Update and restart" / vendor tools / installer, service-recovery restart, no-1074 cases, system-process crash, hang as symptom, update still installing, shutdown requested but hung, battery note, named and unnamed event fields; lists keep the nearest events and sum up older problems; the verdict stops at the power cycle before.</td></tr>
   <tr><td class="k">Folder selection</td><td>2</td><td>Only System, Application and Storport (Operational, Health) are read from a folder — by winevt\Logs and by exported file names; other logs are skipped and counted; a file given by itself is always read; the demo folder skips its Partition log.</td></tr>
   <tr><td class="k">Robustness</td><td>1</td><td>30 rounds of up to 400 random, malformed events (bad times, garbage fields, huge numbers, odd Unicode) through the engine and every export — nothing may crash.</td></tr>
 </tbody></table>
@@ -747,6 +747,7 @@ python -m unittest discover -s tests -v</pre>
   <li>Every tab and the detail drawer rendered in a real browser (headless Chrome) — the demo case, a case saved by the previous version and a busy case — with a check for script errors.</li>
   <li>A case saved by the previous version opens without errors; its app / update lists keep their old 15 / 10-minute form until it is re-run.</li>
   <li>A busy case — crash loops of 351 and 251 events around one hard shutdown: each list opens at the 100 nearest, <i>Show more</i> loads the rest without moving the rows in view, and the drawer search finds events that were not loaded yet.</li>
+  <li>The tab row measured in Chrome: nothing overflows, so Windows has no scroll bar to draw.</li>
   <li>A folder holding Setup, Security and Partition logs next to the four: 3 skipped; Storport Health read and shown as its own log.</li>
   <li>End-to-end through the real local server: analysis of a folder, the demo, every export, the event API, delete.</li>
   <li>Python 3.9 compatibility (the oldest supported version) — the suite runs on 3.9.</li>
@@ -838,7 +839,7 @@ python -m unittest discover -s tests -v</pre>
 <h2>Likely questions</h2>
 <table class="t">
   <thead><tr><th style="width:31%">Question</th><th>Answer</th></tr></thead><tbody>
-  <tr><td class="k">How accurate is it?</td><td>The rules use standard Windows event IDs and are pinned by 51 tests. Accuracy on real claims will be measured next on 20–30 closed claims with known outcomes. Meanwhile, confidence scores and "needs review" flags show where it is unsure.</td></tr>
+  <tr><td class="k">How accurate is it?</td><td>The rules use standard Windows event IDs and are pinned by 52 tests. Accuracy on real claims will be measured next on 20–30 closed claims with known outcomes. Meanwhile, confidence scores and "needs review" flags show where it is unsure.</td></tr>
   <tr><td class="k">Can it prove the drive is fine?</td><td>No — and it says so. The logs are stored on the drive itself; a sudden freeze can lose the last events. It points to SMART and drive-side logs for that.</td></tr>
   <tr><td class="k">How does it know it's our drive?</td><td>Storport events usually name the drive; disk events are mapped through the boot's disk inventory; anything else is "probably" (only one drive) or "not identified". The basis is shown on every event.</td></tr>
   <tr><td class="k">What if the PC has two drives or a USB stick?</td><td>Disk numbers are mapped per boot; unnamed events are not guessed when there are two drives (demo S3).</td></tr>
@@ -1037,7 +1038,7 @@ python run_wela.py                                    <span class="c"># UI at ht
 python -m wela serve --port 8765 --no-browser
 python -m wela analyze &lt;folder or files&gt; --out report.html --tz 330
 python -m wela demo demo_logs
-python -m unittest discover -s tests -v              <span class="c"># 51 tests</span></pre>
+python -m unittest discover -s tests -v              <span class="c"># 52 tests</span></pre>
 <h2>Collect logs on the customer PC (administrator command prompt)</h2>
 <pre class="code">wevtutil epl System System.evtx
 wevtutil epl Application Application.evtx
@@ -1061,14 +1062,13 @@ web/                   UI (vanilla HTML/CSS/JS, works offline)
 tests/                 unittest suite (demo scenario, rule tests, robustness test)
 docs/                  team walkthrough (.pptx / .pdf), this reference and its source (src/)</pre>
 <h2>This release (main)</h2>
-<h3>Update of 1 November 2026</h3>
+<h3>Update of 2 November 2026</h3>
 <ul>
-  <li><b>App / update lists run cycle to cycle:</b> from the power cycle before to this one and on to the next — 100 nearest first, the rest on request; scroll boxes open at the end nearest the power cycle; "Earlier, since …" in the reasons.</li>
-  <li><b>Search by event ID</b> in Power cycles, Drive, Apps &amp; updates and the detail drawer; <b>Near</b> shows the power cycles before and after, clickable.</li>
-  <li><b>Folders:</b> only System, Application and Storport (Operational, Health) are read; skipped logs are counted.</li>
-  <li><b>Simpler:</b> the SMART check tab is gone; the home screen no longer fills in the last path.</li>
-  <li><b>Quality:</b> 4 new tests (51 total).</li>
+  <li><b>The trigger verdict stops at the power cycle before:</b> two power cycles minutes apart no longer share the same crashes — every reason now comes from the stretch the drawer lists.</li>
+  <li><b>No stray scroll bar</b> next to the tabs on Windows. <b>Quality:</b> 1 new test (52 total).</li>
 </ul>
+<h3>1 November 2026</h3>
+<p class="small"><b>App / update lists run cycle to cycle</b> — 100 nearest first, the rest on request, "Earlier, since …" in the reasons; <b>search by event ID</b> in every list and the drawer, and a clickable <b>Near</b> column; folders read only System, Application and Storport; the SMART check tab removed; 4 new tests (51 total).</p>
 <h3>October 2026</h3>
 <p class="small"><b>Which drive</b> — every storage event tied to a drive, Samsung highlighted across UI, timeline, HTML and Excel; <b>what triggered it</b> — 1074 decoding, Windows Update, installers, OEM / IT tools, crashes and hangs, with confidence and the symptom-vs-cause check; the Apps &amp; updates tab and the Excel software sheets; 27 new tests (47 total) and a demo case of 16 power cycles.</p>
 </body>
