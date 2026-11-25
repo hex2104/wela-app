@@ -1046,9 +1046,9 @@ function tabSoftware() {
   const draw = () => {
     const f = $("#swF").value, m = matcher(S.v.swQ);
     const rows = evs.filter((e) => (f === "all" || (f === "problems" ? e.state !== "info" || ["restart", "reboot"].includes(e.kind) : e.group === f)) &&
-      (!m || m([e.eid], `${e.label} ${e.subject || ""} ${e.detail || ""} ${e.provider} ${e.channel}`)));
+      (!m || m([e.eid], `${e.label} ${e.subject || ""} ${e.detail || ""} ${e.provider} ${e.channel}`))).reverse();   // latest first
     $("#swN").textContent = rows.length < evs.length ? `${rows.length.toLocaleString()} of ${evs.length.toLocaleString()}` : "";
-    pageRows($("#swT"), `<thead><tr><th>Time (${tzLabel()})</th><th>ID</th><th>What</th><th>App / update / service</th><th>Source</th><th>Severity</th><th>Near</th></tr></thead>`, rows, (e) => `
+    pageRows($("#swT"), `<thead><tr><th title="Latest first">Time (${tzLabel()}) ↓</th><th>ID</th><th>What</th><th>App / update / service</th><th>Source</th><th>Severity</th><th>Near</th></tr></thead>`, rows, (e) => `
       <tr class="click" data-idx="${e.idx}"><td style="white-space:nowrap">${fmt(e.time)}</td><td class="mono"><b>${e.eid}</b></td><td>${esc(e.label)}</td>
         <td>${esc(e.subject || "")}${e.detail ? `<div class="muted small">${esc(e.detail)}</div>` : ""}</td>
         <td class="muted small">${esc(e.provider.replace("Microsoft-Windows-", ""))} · ${esc(shortChan(e.channel))}</td><td>${stateChip(e.state)}</td>
