@@ -599,43 +599,80 @@ function openContext(idx, title) {
 /* ------------------------------------------------------------------ timeline */
 function tabTimeline() {
   const c = S.c;
-  if (!S.tl) { const pad = (c.coverage.end_ts - c.coverage.start_ts) * 0.01 || 60; S.tl = { t0: c.coverage.start_ts - pad, t1: c.coverage.end_ts + pad }; }
+  S.tl = S.tl || {};
+  if (S.tl.t0 == null) { const pad = (c.coverage.end_ts - c.coverage.start_ts) * 0.01 || 60; S.tl.t0 = c.coverage.start_ts - pad; S.tl.t1 = c.coverage.end_ts + pad; }
+  if (S.tl.cur == null) { const it = c.items.find((x) => x.type === "hard" && x.last_alive_ts); S.tl.cur = it ? it.last_alive_ts : c.coverage.start_ts; }
+  S.tl.win = S.tl.win || store.get("tlwin", 5);
+  /* one card: the timeline, then the logs at its line, so both fit on one screen; the legend opens on hover */
   $("#tabBody").innerHTML = `
     <div class="card"><div class="card-h"><h3>Timeline</h3>
-      <div class="tl-tools"><span class="muted small">Scroll to zoom · drag to pan · click a marker for details</span>
+      <div class="tl-tools"><span class="muted small">Scroll to zoom · drag to pan · click or drag the line to read the logs · ← → next event</span>
+        <span class="menu tl-leg"><button class="btn">Legend</button><div class="menu-pop legend">
+          <span><i style="background:var(--accent);opacity:.35"></i>Powered on (boot session)</span>
+          ${Object.entries(TYPES).map(([k, v]) => `<span><i style="background:${v.color}"></i>${v.label}</span>`).join("")}
+          <span><i style="background:var(--warn)"></i>Storage / app warning</span><span><i style="background:var(--bad)"></i>Storage error / reset, app crash</span>
+          <span><i style="background:var(--sam-soft);box-shadow:inset 0 0 0 1.5px var(--sam)"></i>${esc(HV())} drive lane</span>
+          <span><i style="background:var(--accent)"></i>Update / install / restart</span>
+          <span><i style="background:var(--ink)"></i>The line: its logs are listed below</span></div></span>
         <button class="btn" id="zin">+</button><button class="btn" id="zout">−</button><button class="btn" id="zfit">Fit</button></div></div>
-      <div class="card-b"><div class="tl-wrap" id="tlwrap"><svg id="tlsvg"></svg></div>
-      <div class="legend">
-        <span><i style="background:var(--accent);opacity:.35"></i>Powered on (boot session)</span>
-        ${Object.entries(TYPES).map(([k, v]) => `<span><i style="background:${v.color}"></i>${v.label}</span>`).join("")}
-        <span><i style="background:var(--warn)"></i>Storage / app warning</span><span><i style="background:var(--bad)"></i>Storage error / reset, app crash</span>
-        <span><i style="background:var(--sam-soft);box-shadow:inset 0 0 0 1.5px var(--sam)"></i>${esc(HV())} drive lane</span>
-        <span><i style="background:var(--accent)"></i>Update / install / restart</span>
-      </div></div></div>`;
+      <div class="card-b"><div class="tl-wrap" id="tlwrap"><svg id="tlsvg"></svg><div class="tl-band" id="tlband"></div>
+        <div class="tl-cur" id="tlcur"><div class="grab"></div><span class="lbl" id="tlcurl" title="Drag to move through time"></span></div></div>
+      <div class="lc-bar"><h3>Logs at the line</h3><span class="muted small" id="lcT"></span><span class="spacer"></span>
+        <button class="btn" id="lcPrev" title="Previous event (←) · Shift: previous power cycle">‹</button><button class="btn" id="lcNext" title="Next event (→) · Shift: next power cycle">›</button>
+        <select id="lcW" title="How far either side of the line">${[1, 5, 10, 30, 60].map((v) => `<option value="${v}" ${v === S.tl.win ? "selected" : ""}>± ${v} s</option>`).join("")}</select></div>
+      <div class="lc-grid" id="lcGrid">${LOGS.map(([k, n]) => `<div class="lc"><div class="lc-h"><b>${n}</b><span class="muted small" id="lcn-${k}"></span></div><div class="lc-b" id="lc-${k}"></div></div>`).join("")}</div></div></div>`;
   drawTimeline();
   const svg = $("#tlsvg");
-  svg.addEventListener("wheel", (e) => { e.preventDefault(); const r = svg.getBoundingClientRect(); zoomAt((e.clientX - r.left) / r.width, e.deltaY > 0 ? 1.25 : 0.8); }, { passive: false });
-  let drag = null;
-  svg.addEventListener("mousedown", (e) => { drag = { x: e.clientX, t0: S.tl.t0, t1: S.tl.t1 }; svg.classList.add("drag"); });
-  window.addEventListener("mouseup", () => { drag = null; svg.classList.remove("drag"); });
+  svg.addEventListener("wheel", (e) => {
+    e.preventDefault(); const r = svg.getBoundingClientRect();
+    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.shiftKey ? e.deltaY : 0;   // sideways = pan
+    if (!d) return zoomAt((e.clientX - r.left) / r.width, e.deltaY > 0 ? 1.25 : 0.8);
+    const dt = (d / (r.width - TL_LW - TL_R)) * (S.tl.t1 - S.tl.t0); S.tl.t0 += dt; S.tl.t1 += dt; drawTimeline();
+  }, { passive: false });
+  let drag = null;   // a press that does not move is a click: it puts the line there
+  svg.addEventListener("mousedown", (e) => { drag = { x: e.clientX, t0: S.tl.t0, t1: S.tl.t1, moved: false }; svg.classList.add("drag"); });
+  window.onmouseup = (e) => {
+    if (drag && !drag.moved && $("#tlsvg")) setCursor(tlT(e.clientX), { snap: true });
+    drag = null; $("#tlsvg")?.classList.remove("drag");
+  };
   svg.addEventListener("mousemove", (e) => {
-    if (!drag) return;
-    const r = svg.getBoundingClientRect(), dt = ((drag.x - e.clientX) / (r.width - 150)) * (drag.t1 - drag.t0);
+    if (!drag || (!drag.moved && Math.abs(e.clientX - drag.x) < 4)) return;
+    drag.moved = true;
+    const r = svg.getBoundingClientRect(), dt = ((drag.x - e.clientX) / (r.width - TL_LW)) * (drag.t1 - drag.t0);
     S.tl.t0 = drag.t0 + dt; S.tl.t1 = drag.t1 + dt; drawTimeline();
   });
+  const cur = $("#tlcur");
+  cur.addEventListener("pointerdown", (e) => {   // the drag listens on the window, so a fast move does not lose the line
+    e.preventDefault(); cur.classList.add("on"); $("#tooltip").style.opacity = 0;
+    const move = (ev) => setCursor(tlT(ev.clientX), { snap: true });
+    const up = () => { removeEventListener("pointermove", move); removeEventListener("pointerup", up); removeEventListener("pointercancel", up); cur.classList.remove("on"); };
+    addEventListener("pointermove", move); addEventListener("pointerup", up); addEventListener("pointercancel", up);
+  });
   $("#zin").onclick = () => zoomAt(0.5, 0.6); $("#zout").onclick = () => zoomAt(0.5, 1.6);
-  $("#zfit").onclick = () => { S.tl = null; tabTimeline(); };
-  window.onresize = () => S.tab === "timeline" && drawTimeline();
+  $("#zfit").onclick = () => { S.tl.t0 = null; tabTimeline(); };
+  $("#lcPrev").onclick = (e) => stepCursor(-1, e.shiftKey); $("#lcNext").onclick = (e) => stepCursor(1, e.shiftKey);
+  $("#lcW").onchange = (e) => { S.tl.win = +e.target.value; store.set("tlwin", S.tl.win); placeCursor(); renderLogs(); };
+  $("#lcGrid").onclick = (ev) => {
+    const j = ev.target.closest(".ljump"); if (j) return setCursor(+j.dataset.t, { follow: true });
+    const r = ev.target.closest(".lr"), ix = S.ix; if (!r || !ix) return;
+    const i = +r.dataset.idx;
+    if (ix.open.has(i)) ix.open.delete(i); else { ix.open.add(i); if (!ix.full.has(i)) loadFull(ix, i); }
+    renderLogs();
+  };
+  window.onresize = () => { if (S.tab === "timeline") { drawTimeline(); sizeLogs(); } };
+  sizeLogs(); renderLogs();
+  loadIndex().then(renderLogs).catch((e) => LOGS.forEach(([k]) => { const b = $(`#lc-${k}`); if (b) b.innerHTML = `<div class="lempty">${esc(e.message)}</div>`; }));
 }
 function zoomAt(frac, k) {
-  const LW = 150, W = $("#tlsvg").getBoundingClientRect().width;
-  const f = Math.min(1, Math.max(0, (frac * W - LW) / (W - LW - 16)));
+  const W = $("#tlsvg").getBoundingClientRect().width;
+  const f = Math.min(1, Math.max(0, (frac * W - TL_LW) / (W - TL_LW - TL_R)));
   const span = S.tl.t1 - S.tl.t0, ns = Math.max(120, span * k), at = S.tl.t0 + f * span;
   S.tl.t0 = at - f * ns; S.tl.t1 = at + (1 - f) * ns; drawTimeline();
 }
 function drawTimeline() {
   const svg = $("#tlsvg"), c = S.c; if (!svg) return;
-  const W = svg.getBoundingClientRect().width || 900, LW = 150, R = 16;
+  const W = svg.getBoundingClientRect().width || 900, LW = TL_LW, R = TL_R;
+  S.tl.W = W;
   const chans = c.channels;
   const hasHl = c.storage_events.some((e) => isHl(e.hl));
   const lanes = [["power", "Power state", 34], ["trans", "Transitions", 34], ["sleep", "Sleep", 26],
@@ -689,14 +726,14 @@ function drawTimeline() {
     const t = tsOf(e.time); if (!vis(t, t)) return;
     const col = STATE_COLOR[e.state] || "var(--warn)", l = isHl(e.hl) ? L.hl : L.drive;
     const who = e.dev_basis !== undefined ? `<br>${esc(e.dev || "drive not identified")}${e.hl === "probably" ? " (probably)" : ""}` : "";
-    out.push(`<rect class="hit ctxe" data-idx="${e.idx}" data-tip="${esc(`<b>${e.eid} · ${esc(e.label)}</b>${esc(e.provider)}<br>${fmt(e.time)}${who}`)}" x="${x(t) - 2}" y="${l.y + 4}" width="4" height="${l.h - 8}" rx="1.5" fill="${col}" ${e.hl === "probably" ? 'opacity=".6"' : ""}/>`);
+    out.push(`<rect class="hit ctxe" data-t="${t}" data-tip="${esc(`<b>${e.eid} · ${esc(e.label)}</b>${esc(e.provider)}<br>${fmt(e.time)}${who}`)}" x="${x(t) - 2}" y="${l.y + 4}" width="4" height="${l.h - 8}" rx="1.5" fill="${col}" ${e.hl === "probably" ? 'opacity=".6"' : ""}/>`);
   });
   // apps & updates: problems and restart-related events
   if (L.sw) c.software_events.forEach((e) => {
     if (e.state === "info" && !["restart", "reboot"].includes(e.kind)) return;
     const t = tsOf(e.time); if (!vis(t, t)) return;
     const col = e.state === "error" ? "var(--bad)" : ["restart", "reboot"].includes(e.kind) ? "var(--accent)" : "var(--warn)";
-    out.push(`<rect class="hit ctxe" data-idx="${e.idx}" data-tip="${esc(`<b>${e.eid} · ${esc(e.label)}</b>${esc(e.subject || e.provider)}<br>${fmt(e.time)}`)}" x="${x(t) - 2}" y="${L.sw.y + 4}" width="4" height="${L.sw.h - 8}" rx="1.5" fill="${col}"/>`);
+    out.push(`<rect class="hit ctxe" data-t="${t}" data-tip="${esc(`<b>${e.eid} · ${esc(e.label)}</b>${esc(e.subject || e.provider)}<br>${fmt(e.time)}`)}" x="${x(t) - 2}" y="${L.sw.y + 4}" width="4" height="${L.sw.h - 8}" rx="1.5" fill="${col}"/>`);
   });
   // coverage
   chans.forEach((ch, i) => {
@@ -714,9 +751,151 @@ function drawTimeline() {
     n.addEventListener("mousemove", (e) => { tt.innerHTML = n.dataset.tip; tt.style.opacity = 1; tt.style.left = Math.min(innerWidth - 310, e.clientX + 14) + "px"; tt.style.top = e.clientY + 14 + "px"; });
     n.addEventListener("mouseleave", () => (tt.style.opacity = 0));
   });
-  $$(".mk", svg).forEach((n) => n.addEventListener("click", (e) => { e.stopPropagation(); tt.style.opacity = 0; openDetail(n.dataset.id); }));
-  $$(".ctxe", svg).forEach((n) => n.addEventListener("click", () => { tt.style.opacity = 0; openContext(n.dataset.idx, "Event in context"); }));
+  $$(".mk", svg).forEach((n) => n.addEventListener("click", (e) => {
+    e.stopPropagation(); tt.style.opacity = 0;
+    const it = c.items.find((x) => x.id === n.dataset.id); if (it?.time_ts) setCursor(it.time_ts);
+    openDetail(n.dataset.id);
+  }));
+  $$(".ctxe", svg).forEach((n) => n.addEventListener("click", () => { tt.style.opacity = 0; setCursor(+n.dataset.t); }));
   $$(".mk,.ctxe", svg).forEach((n) => n.addEventListener("mousedown", (e) => e.stopPropagation()));
+  placeCursor();
+}
+
+/* ------------------------------------------------------------------ timeline line: the logs at one moment */
+/* the browser holds every event's time and log (one small index per case), so moving the line updates the counts,
+   offsets and order in the same frame; what each event says comes from the server 256 at a time and is kept */
+const TL_LW = 150, TL_R = 16;
+const LOGS = [["s", "System"], ["a", "Application"], ["p", "Storport"]];
+const PANEL_OF = { s: "s", a: "a", p: "p", o: "p" };   // other logs (e.g. Partition) sit with Storport
+const LOG_MAX = 200, CHUNK = 256;
+const LEVEL_STATE = { 1: "error", 2: "error", 3: "warning" };
+const tlX = (t) => TL_LW + ((t - S.tl.t0) / (S.tl.t1 - S.tl.t0)) * (S.tl.W - TL_LW - TL_R);
+function tlT(clientX) {
+  const r = $("#tlsvg").getBoundingClientRect(), x = Math.min(r.width - TL_R, Math.max(TL_LW, clientX - r.left));
+  return S.tl.t0 + ((x - TL_LW) / (r.width - TL_LW - TL_R)) * (S.tl.t1 - S.tl.t0);
+}
+function fmtMs(ts, date = false) {
+  const d = new Date(Math.round((ts + tzOffset() * 60) * 1000)), p = (n, l = 2) => String(n).padStart(l, "0");
+  return `${date ? `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ` : ""}${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}.${p(d.getUTCMilliseconds(), 3)}`;
+}
+const fmtSec = (s) => (Math.abs(s) < 5e-4 ? "0.000 s" : `${s < 0 ? "−" : "+"}${Math.abs(s).toFixed(3)} s`);
+function loadIndex() {
+  const cid = S.c.id;
+  if (S.ix?.cid === cid) return Promise.resolve(S.ix);
+  if (S.ixLoad?.cid === cid) return S.ixLoad.p;
+  const p = api(`/api/cases/${encodeURIComponent(cid)}/index`).then((r) => {
+    const n = r.d.length, ts = new Float64Array(n), by = {};
+    LOGS.forEach(([k]) => (by[k] = { n: 0 }));
+    for (let i = 0, ms = r.t0; i < n; i++) { ms += r.d[i]; ts[i] = ms / 1000; by[PANEL_OF[r.k[i]]].n++; }
+    Object.values(by).forEach((b) => { b.ts = new Float64Array(b.n); b.idx = new Int32Array(b.n); b.n = 0; });
+    for (let i = 0; i < n; i++) { const b = by[PANEL_OF[r.k[i]]]; b.ts[b.n] = ts[i]; b.idx[b.n++] = i; }
+    const ix = { cid, ts, by, rows: new Map(), full: new Map(), open: new Set() };
+    if (S.c?.id === cid) S.ix = ix;
+    return ix;
+  });
+  S.ixLoad = { cid, p };
+  p.catch(() => { if (S.ixLoad?.p === p) S.ixLoad = null; });
+  return p;
+}
+function placeCursor() {
+  const cur = $("#tlcur"), band = $("#tlband"), tl = S.tl; if (!cur || tl?.cur == null || !tl.W) return;
+  const x = tlX(tl.cur), show = x >= TL_LW - 1 && x <= tl.W - TL_R + 1;
+  cur.style.display = band.style.display = show ? "" : "none";
+  if (!show) return;
+  const a = Math.max(TL_LW, tlX(tl.cur - tl.win)), b = Math.min(tl.W - TL_R, tlX(tl.cur + tl.win));
+  cur.style.left = `${x}px`; band.style.left = `${a}px`; band.style.width = `${Math.max(0, b - a)}px`;
+  const lbl = $("#tlcurl"); lbl.textContent = fmtMs(tl.cur, true).slice(5);
+  lbl.style.transform = x > tl.W - 80 ? "translateX(-100%)" : "";
+}
+/* zoomed out, a pixel is minutes: a click or drag near events lands on the nearest one instead of on empty time */
+function snapT(t) {
+  const ix = S.ix, tl = S.tl; if (ix?.cid !== S.c.id || !ix.ts.length) return t;
+  const a = ix.ts, i = bisect(a, (v) => v < t - tl.win);
+  if (i < a.length && a[i] <= t + tl.win) return t;
+  const j = bisect(a, (v) => v < t), near = [a[j - 1], a[j]].filter((v) => v !== undefined).sort((p, q) => Math.abs(p - t) - Math.abs(q - t))[0];
+  return near !== undefined && Math.abs(near - t) <= (8 * (tl.t1 - tl.t0)) / Math.max(1, tl.W - TL_LW - TL_R) ? near : t;
+}
+function setCursor(t, { snap = false, follow = false } = {}) {
+  const tl = S.tl; if (!tl || !Number.isFinite(t)) return;
+  tl.cur = snap ? snapT(t) : t;
+  if (follow && (tl.cur < tl.t0 || tl.cur > tl.t1)) { const h = (tl.t1 - tl.t0) / 2; tl.t0 = tl.cur - h; tl.t1 = tl.cur + h; drawTimeline(); }
+  else placeCursor();
+  queueLogs();
+}
+/* ← → the next event in any of the logs; with Shift the next power cycle */
+function stepCursor(dir, cycle) {
+  const t = S.tl?.cur; if (t == null) return;
+  let a = S.ix?.cid === S.c.id ? S.ix.ts : [];
+  if (cycle) a = S.c.items.map((x) => x.time_ts).filter((x) => x != null).sort((p, q) => p - q);
+  const i = dir > 0 ? bisect(a, (v) => v <= t + 5e-4) : bisect(a, (v) => v < t - 5e-4) - 1;
+  if (i >= 0 && i < a.length) setCursor(a[i], { follow: true });
+}
+/* the three logs fill what the window has left below the timeline, so both fit on one screen where they can */
+function sizeLogs() {
+  const g = $("#lcGrid"), card = $("#tlwrap")?.closest(".card"); if (!g || !card) return;
+  const below = g.getBoundingClientRect().top - card.getBoundingClientRect().top;
+  g.style.setProperty("--lch", `${Math.max(200, Math.min(520, innerHeight - 58 - below - 64))}px`);
+}
+let logsQueued = false;
+function queueLogs() { if (!logsQueued) { logsQueued = true; requestAnimationFrame(() => { logsQueued = false; renderLogs(); }); } }
+function renderLogs() {
+  const tl = S.tl, ix = S.ix; if (!$("#lcGrid") || tl?.cur == null) return;
+  const t = tl.cur, w = tl.win, key = `${t}|${w}`;
+  $("#lcT").textContent = `${fmtMs(t, true)} ${tzLabel()}`;
+  if (ix?.cid !== S.c.id) { LOGS.forEach(([k]) => { $(`#lc-${k}`).innerHTML = '<div class="lempty">Loading the logs…</div>'; }); return; }
+  let need0 = Infinity, need1 = -1;
+  LOGS.forEach(([k, name]) => {
+    const b = ix.by[k], box = $(`#lc-${k}`), cnt = $(`#lcn-${k}`);
+    if (!b.ts.length) { cnt.textContent = ""; box.innerHTML = `<div class="lempty">No ${name} log in this case</div>`; return; }
+    const lo = bisect(b.ts, (v) => v < t - w), hi = bisect(b.ts, (v) => v <= t + w), at = bisect(b.ts, (v) => v < t);
+    const keep = box._key === key, top = box.scrollTop; box._key = key;
+    cnt.textContent = hi > lo ? `${(hi - lo).toLocaleString()} within ±${w} s` : "";
+    if (hi === lo) {
+      box.innerHTML = `<div class="lempty">Nothing logged within ±${w} s${lo > 0 ? `<a class="ljump" data-t="${b.ts[lo - 1]}">‹ previous: ${fmtDur(t - b.ts[lo - 1])} earlier</a>` : ""}${hi < b.ts.length ? `<a class="ljump" data-t="${b.ts[hi]}">next: ${fmtDur(b.ts[hi] - t)} later ›</a>` : ""}</div>`;
+      return;
+    }
+    const a = Math.max(lo, Math.min(at - LOG_MAX / 2, hi - LOG_MAX)), z = Math.min(hi, a + LOG_MAX), now = `<div class="lnow"><span>${fmtMs(t)}</span></div>`, html = [];
+    if (a > lo) html.push(`<div class="lmore">${(a - lo).toLocaleString()} earlier not shown</div>`);
+    for (let i = a; i < z; i++) {
+      if (i === at) html.push(now);
+      const gi = b.idx[i], r = ix.rows.get(gi);
+      if (!r) { need0 = Math.min(need0, gi); need1 = Math.max(need1, gi); }
+      html.push(logRow(ix, gi, b.ts[i], b.ts[i] - t, r));
+    }
+    if (at >= z) html.push(now);
+    if (z < hi) html.push(`<div class="lmore">${(hi - z).toLocaleString()} later not shown</div>`);
+    box.innerHTML = html.join("");
+    box.scrollTop = keep ? top : box.querySelector(".lnow").offsetTop - box.clientHeight / 2;
+  });
+  if (need1 >= 0) fetchRows(ix, need0, need1);
+}
+function logRow(ix, i, ts, off, r) {
+  const st = r ? r.state || LEVEL_STATE[r.level] || "" : "", prov = r ? r.provider.replace("Microsoft-Windows-", "") : "";
+  const log = r && !/^(System|Application|Microsoft-Windows-Storage-Storport\/Operational)$/i.test(r.channel) ? `<span class="ltag">${esc(shortChan(r.channel))}</span>` : "";
+  const sub = r ? [r.label ? prov : "", r.text].filter(Boolean).join(" · ") : "";
+  return `<div class="lr ${st}${Math.abs(off) < 5e-4 ? " at" : ""}" data-idx="${i}" title="${esc(sub)}">
+    <div class="lo"><b>${fmtSec(off)}</b><span>${fmtMs(ts)}</span></div>
+    <div class="lx"><div>${r ? `<b class="mono">${r.eid}</b> ${esc(r.label || prov)}${log}` : "&nbsp;"}</div><div class="lt">${r ? esc(sub) || "&nbsp;" : "…"}</div></div></div>${
+    ix.open.has(i) ? `<pre class="data lpre">${esc(ix.full.has(i) ? JSON.stringify(ix.full.get(i), null, 1) : "Loading…")}</pre>` : ""}`;
+}
+let rowsBusy = false;
+async function fetchRows(ix, lo, hi) {
+  if (rowsBusy) return;   // one request at a time: when it lands, the next frame asks for whatever is still missing
+  // plus a block either side, so a drag finds the next rows already here
+  const a = Math.max(0, (Math.floor(lo / CHUNK) - 1) * CHUNK), b = Math.min(ix.ts.length, a + 16 * CHUNK, (Math.floor(hi / CHUNK) + 2) * CHUNK);
+  rowsBusy = true;
+  try {
+    const rows = await api(`/api/cases/${encodeURIComponent(ix.cid)}/rows?from=${a}&to=${b}`);
+    if (ix.rows.size > 200000) ix.rows.clear();
+    rows.forEach((r) => ix.rows.set(r.idx, r));
+    for (let i = a; i < b; i++) if (!ix.rows.has(i)) ix.rows.set(i, { idx: i, eid: "", level: 4, provider: "", channel: "", label: "(not found)", text: "", state: "" });
+  } catch (e) { toast(e.message); return; } finally { rowsBusy = false; }
+  if (S.ix === ix) queueLogs();
+}
+async function loadFull(ix, i) {
+  try { const [e] = await api(`/api/cases/${encodeURIComponent(ix.cid)}/events?around=${i}&n=0`); ix.full.set(i, e?.data ?? {}); }
+  catch (err) { ix.full.set(i, { error: err.message }); }
+  if (S.ix === ix) renderLogs();
 }
 
 /* ------------------------------------------------------------------ drive */
@@ -835,6 +1014,11 @@ async function init() {
   $("#brandHome").onclick = renderHome; $("#newBtn").onclick = renderHome;
   $("#drawerBack").onclick = closeDrawer;
   document.addEventListener("keydown", (e) => e.key === "Escape" && closeDrawer());
+  document.addEventListener("keydown", (e) => {   // timeline: ← → move the line to the previous / next event
+    if ((e.key !== "ArrowLeft" && e.key !== "ArrowRight") || S.tab !== "timeline" || !$("#tlcur") || $("#drawer").classList.contains("open")
+      || /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName || "")) return;
+    e.preventDefault(); stepCursor(e.key === "ArrowRight" ? 1 : -1, e.shiftKey);
+  });
   try { S.settings = (await api("/api/config")).settings; } catch { /* defaults */ }
   renderHome();
 }

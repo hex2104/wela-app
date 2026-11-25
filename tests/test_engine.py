@@ -5,10 +5,11 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from wela import catalog, demo, engine, parser, report  # noqa: E402
+from wela import catalog, demo, engine, parser, report, store  # noqa: E402
 from wela.models import Event, parse_time  # noqa: E402
 
 
@@ -515,6 +516,47 @@ class Folders(unittest.TestCase):
         _, sources, skipped = parser.load([tmp])
         self.assertEqual(sorted(s["file"] for s in sources), ["Application.xml", "Storport-Operational.xml", "System.xml"])
         self.assertEqual([os.path.basename(x) for x in skipped], ["Partition-Diagnostic.xml"])
+
+
+class TimelineLogs(unittest.TestCase):
+    """The timeline line: every event's time and log, in order, and short rows for any stretch of them."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root, store.ROOT = store.ROOT, tempfile.mkdtemp()
+        cls.events, sources, _ = parser.load(demo.build(tempfile.mkdtemp()))
+        store.save("tl", engine.analyze(cls.events, catalog.load_config(), sources), cls.events)
+
+    @classmethod
+    def tearDownClass(cls):
+        store.ROOT = cls.root
+
+    def test_index_gives_every_event_its_time_and_log(self):
+        warm = store.event_index("tl")   # kept from the analysis
+        with store._lock:
+            store._cache.clear()
+            store._index.clear()
+        ix = store.event_index("tl")     # read back from disk, as after a restart
+        self.assertEqual(ix, warm)
+        ms, t = [], ix["t0"]
+        for d in ix["d"]:
+            t += d
+            ms.append(t)
+        epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        self.assertEqual(ms, [(e.time - epoch) // timedelta(milliseconds=1) for e in self.events])
+        kinds = {"system": "s", "application": "a", "storport": "p"}
+        self.assertEqual(ix["k"], "".join(kinds.get(engine.channel_kind(e.channel), "o") for e in self.events))
+
+    def test_rows_say_what_each_event_is(self):
+        rows = store.event_rows("tl", 0, 5)
+        self.assertEqual([r["idx"] for r in rows], [0, 1, 2, 3, 4])
+        i41 = next(e.idx for e in self.events if e.eid == 41)
+        r41 = store.event_rows("tl", i41, i41 + 1)[0]
+        self.assertEqual((r41["label"], r41["eid"]), ("Unclean shutdown reported", 41))   # the ID is not repeated
+        self.assertIn("BugcheckCode=", r41["text"])
+        sw = next(e for e in self.events if e.software and e.software["subject"])
+        self.assertIn(sw.software["subject"], store.event_rows("tl", sw.idx, sw.idx + 1)[0]["text"])
+        self.assertEqual(store.event_rows("tl", len(self.events), len(self.events) + 9), [])
 
 
 class Robustness(unittest.TestCase):

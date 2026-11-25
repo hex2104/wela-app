@@ -116,6 +116,11 @@ Partition and Setup are not read from a folder: add them as files of their own.
     exactly those event IDs (`41`, or `41, 6008`); anything else is a text search. In the detail panel it searches
     the whole stretch, not only the events loaded. The **Near** column shows the time since the power cycle before
     an event and to the one after it; click either to open it.
+11. **The timeline line**: drag the black line on the Timeline (or click anywhere, or step with ← → — Shift steps a
+    power cycle) and the System, Application and Storport events within ± 5 s (1–60 s to choose) are listed under it,
+    each with its offset from the line and its log time to the millisecond. The browser loads every event's time and
+    log once per case (`/api/cases/<id>/index`), so the line moves with no round trip; what each event says comes
+    from `/api/cases/<id>/rows` 256 at a time and is kept.
 
 All event IDs, weights, vendor rules and thresholds live in `wela/catalog.py`. Override any of them with `wela_config.json`
 next to `run_wela.py`, e.g.

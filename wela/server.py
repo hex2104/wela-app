@@ -49,6 +49,13 @@ def run_analysis(paths, name=None, settings=None):
     return result
 
 
+def _warm(case_id: str):
+    try:
+        store.event_index(case_id)
+    except Exception:   # the request that needs it reports the error
+        pass
+
+
 def _pick(kind: str):
     """Native file/folder picker (tkinter) in a child process; returns list of paths."""
     code = (
@@ -112,9 +119,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(store.list_cases())
             if len(parts) == 3 and parts[1] == "cases":
                 r = store.load_result(parts[2])
+                if r:   # read its events in the background: the timeline cursor needs them next
+                    threading.Thread(target=_warm, args=(parts[2],), daemon=True).start()
                 return self._json(r) if r else self._err("case not found", 404)
             if len(parts) == 4 and parts[1] == "cases" and parts[3] == "events":
                 return self._events(parts[2], q)
+            if len(parts) == 4 and parts[1] == "cases" and parts[3] == "index":
+                return self._json(store.event_index(parts[2]))
+            if len(parts) == 4 and parts[1] == "cases" and parts[3] == "rows":
+                i0 = int(q.get("from", 0))
+                return self._json(store.event_rows(parts[2], i0, min(int(q.get("to", i0 + 256)), i0 + 4096)))
             if len(parts) == 4 and parts[1] == "cases" and parts[3].startswith("export."):
                 return self._export(parts[2], parts[3].split(".", 1)[1], int(q.get("tz", 0) or 0))
             return self._err("not found", 404)

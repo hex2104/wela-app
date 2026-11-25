@@ -98,7 +98,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
     <div><b>Question 3</b>When does WELA say the drive caused it — and that it is Samsung's?</div>
     <div><b>Question 4</b>How is an app, update or service singled out as the trigger?</div>
   </div>
-  <div class="meta"><span>Version 0.1.0</span><span>Branch <b>main</b></span><span>2 November 2026</span><span>Prepared by Hitesh Kumar</span></div>
+  <div class="meta"><span>Version 0.1.0</span><span>Branch <b>main</b></span><span>25 November 2026</span><span>Prepared by Hitesh Kumar</span></div>
 </section>
 
 <!-- ============================================================ CONTENTS -->
@@ -142,7 +142,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
 </tbody></table>
 <div class="callout"><b>Two percentages, not one.</b> In the detail drawer, the large percentage under <i>Confidence</i> is about <i>how the power cycle ended</i>. The small one next to the trigger — e.g. <i>App crashed · Possibly · 25%</i> — is about <i>what triggered it</i>. They come from separate weights and answer separate questions; a power cycle can be a 100%-certain hard shutdown with only a 25% software lead.</div>
 <div class="grid4">
-  <div class="tile"><b>52</b><span>automated tests, including a demo case with known answers</span></div>
+  <div class="tile"><b>54</b><span>automated tests, including a demo case with known answers</span></div>
   <div class="tile" style="--c:var(--sam)"><b>0.2 s</b><span>to analyse 19,640 events / 640 power cycles</span></div>
   <div class="tile" style="--c:var(--ok)"><b>0</b><span>installs — Python standard library and Windows' own wevtutil</span></div>
   <div class="tile" style="--c:var(--purple)"><b>4</b><span>logs read: System, Application, Storport, Partition (optional)</span></div>
@@ -534,13 +534,13 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
 <h1 id="eng"><span class="n">11</span>Engineering facts</h1>
 <table class="t">
   <thead><tr><th style="width:20%">Area</th><th>Fact</th></tr></thead><tbody>
-  <tr><td class="k">Stack</td><td>Python 3.9+ standard library only (3,207 lines); <code>.evtx</code> read with Windows' own wevtutil — nothing to install. The UI is a local web page in plain JavaScript and CSS (1,174 lines), no frameworks, no CDN, works offline.</td></tr>
+  <tr><td class="k">Stack</td><td>Python 3.9+ standard library only (3,282 lines); <code>.evtx</code> read with Windows' own wevtutil — nothing to install. The UI is a local web page in plain JavaScript and CSS (1,391 lines), no frameworks, no CDN, works offline.</td></tr>
   <tr><td class="k">Privacy</td><td>The local server binds to 127.0.0.1 only; no network calls; cases are saved under <code>./cases</code> on the engineer's PC. Customer logs never leave the machine.</td></tr>
   <tr><td class="k">Determinism</td><td>Same logs + same catalogue → same verdicts. No randomness, no model, no internet lookups.</td></tr>
   <tr><td class="k">Configurable</td><td>Every event ID, weight, window and vendor rule is in <code>wela/catalog.py</code>; <code>wela_config.json</code> overrides any of it. The drive window, trigger window, restart gap, review line and quiet-gap length are also in the UI's <i>Analysis settings</i>.</td></tr>
   <tr><td class="k">Outputs</td><td>HTML report, Excel workbook (written directly as Office Open XML — no library), CSV, JSON; a command line for batch runs; the full result is saved as one JSON per case.</td></tr>
-  <tr><td class="k">Tests (52)</td><td>Demo scenario with known answers (16 power cycles, 5 sleeps) · 10; power-cycle rules · 13; which drive · 10; software trigger · 16; folder selection · 2; robustness — 30 rounds of up to 400 random, malformed events through the engine and every export · 1.</td></tr>
-  <tr><td class="k">Speed (analysis step, laptop)</td><td>19,640 events / 640 power cycles in 0.21 s · 98,200 / 3,200 in 1.55 s · 196,400 / 6,400 in 4.41 s. Reading <code>.evtx</code> with wevtutil adds time in proportion to file size.</td></tr>
+  <tr><td class="k">Tests (54)</td><td>Demo scenario with known answers (16 power cycles, 5 sleeps) · 10; power-cycle rules · 13; which drive · 10; software trigger · 16; folder selection · 2; timeline line (event index and rows) · 2; robustness — 30 rounds of up to 400 random, malformed events through the engine and every export · 1.</td></tr>
+  <tr><td class="k">Speed (analysis step, laptop)</td><td>19,640 events / 640 power cycles in 0.21 s · 98,200 / 3,200 in 1.55 s · 196,400 / 6,400 in 4.41 s. Reading <code>.evtx</code> with wevtutil adds time in proportion to file size. The timeline line on 196,400 events: 0.12 ms per move, one frame per move while dragging — the browser keeps every event's time and log.</td></tr>
 </tbody></table>
 
 <!-- ============================================================ 12 LIMITS -->
@@ -561,7 +561,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
 <div class="qcols">
   <div class="qa"><span class="qq">Does 100% confidence mean it is certain?</span>No. It means all the evidence Windows normally writes for that kind of ending is there and nothing contradicts it. It is an evidence score, capped at 100%, not a probability. Calibration on closed claims is the next step.</div>
   <div class="qa"><span class="qq">Where do the weights come from?</span>From how directly each event records the ending: the kernel's own 41 (0.50) above the event log's 6008 (0.40) above a crash report (0.20). They are set so one weak signal stays under the 60% review line and two independent ones pass. They are in the catalogue and can be tuned without code.</div>
-  <div class="qa"><span class="qq">How do you know it is right?</span>52 automated tests pin every rule, including a demo case of 16 power cycles and 5 sleeps with known answers and a random-input test. Validation on 20–30 closed claims and lab tests is next.</div>
+  <div class="qa"><span class="qq">How do you know it is right?</span>54 automated tests pin every rule, including a demo case of 16 power cycles and 5 sleeps with known answers and a random-input test. Validation on 20–30 closed claims and lab tests is next.</div>
   <div class="qa"><span class="qq">Could it wrongly blame our drive?</span>"Likely" needs a reset, error or missing-drive event on the drive in the minute before power-off, or a crash code that points at storage. Platform (WHEA) errors alone stop at Possibly; orderly shutdowns are never blamed; undetermined ones are held back a step. And it says whose drive it was.</div>
   <div class="qa"><span class="qq">Could it miss a drive fault?</span>Yes, if the system drive froze before writing its last events. That is why a quiet minute is "No drive evidence", not "healthy", and why every such verdict asks for SMART data.</div>
   <div class="qa"><span class="qq">Why 60 seconds for the drive?</span>Faults that bring a PC down show up seconds before it (in the demo, 32 s and 17 s). A wider window pulls in unrelated noise. It is a setting and can be widened per analysis.</div>
@@ -574,7 +574,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
   <div class="qa"><span class="qq">What if the clock or time zone is wrong?</span>Everything is compared in UTC; the display zone is a choice. Clock changes of 5 min or more are flagged with the process that made them, and time going backwards is flagged.</div>
   <div class="qa"><span class="qq">What if logs were cleared or records are missing?</span>Both are detected (104 / 1102, record-ID gaps). Power cycles at a gap become Undetermined or lose 30% with a warning, and go to review.</div>
   <div class="qa"><span class="qq">Is customer data safe?</span>It runs entirely on the engineer's PC, serves the UI on 127.0.0.1, makes no network calls and needs no installs.</div>
-  <div class="qa"><span class="qq">Does it scale?</span>196,400 events and 6,400 power cycles analyse in about 4.4 s on a laptop.</div>
+  <div class="qa"><span class="qq">Does it scale?</span>196,400 events and 6,400 power cycles analyse in about 4.4 s on a laptop, and the timeline line moves through them in 0.12 ms per step.</div>
   <div class="qa"><span class="qq">Why rules and not machine learning?</span>Claim decisions need answers that are explainable and repeatable, and there is no labelled set of claims to train on yet. Rules can be audited line by line. AI fits on top — writing claim summaries from WELA's results — not in place of the rules.</div>
   <div class="qa"><span class="qq">Can the rules change without a developer?</span>Yes: event IDs, weights, windows and vendor rules are data in the catalogue, overridable with <code>wela_config.json</code>; the main windows are also in the UI's settings.</div>
   <div class="qa"><span class="qq">Why "Possibly" so often?</span>Because the logs rarely prove a software cause; WELA only says "Likely" or "Confirmed" when Windows recorded the request or the component said it restarted the PC.</div>
