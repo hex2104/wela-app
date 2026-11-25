@@ -1,16 +1,16 @@
 <!doctype html>
-<!-- Source of docs/WELA-technical-reference.pdf. Edit this file, then print it from the repository root with Chrome:
+<!-- Source of docs/LENS-technical-reference.pdf. Edit this file, then print it from the repository root with Chrome:
        chrome --headless=new --no-pdf-header-footer --generate-pdf-document-outline --virtual-time-budget=5000
-              --print-to-pdf=docs/WELA-technical-reference.pdf file:///<full path>/docs/src/WELA-technical-reference.html
+              --print-to-pdf=docs/LENS-technical-reference.pdf file:///<full path>/docs/src/LENS-technical-reference.html
      (on macOS chrome is "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome").
      img/ holds the screenshots: the real UI on the demo case ("Try demo data"), light theme, 1440 px wide window. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>WELA — Technical reference &amp; demo guide</title>
+<title>LENS — Technical reference &amp; demo guide</title>
 <style>
 @page { size: A4; margin: 15mm 14mm 16mm 14mm;
-  @bottom-left { content: "WELA · technical reference & demo guide"; font: 7.5pt -apple-system, "Helvetica Neue", Arial, sans-serif; color: #8a91a3; }
+  @bottom-left { content: "LENS · technical reference & demo guide"; font: 7.5pt -apple-system, "Helvetica Neue", Arial, sans-serif; color: #8a91a3; }
   @bottom-right { content: counter(page) " / " counter(pages); font: 7.5pt -apple-system, "Helvetica Neue", Arial, sans-serif; color: #8a91a3; } }
 @page :first { margin: 0; @bottom-left { content: none } @bottom-right { content: none } }
 :root { --ink:#161b29; --ink2:#3a4256; --muted:#6b7387; --line:#dfe3ec; --line2:#eef1f6; --bg2:#f6f7fb;
@@ -95,8 +95,8 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
 
 <!-- ============================================================ COVER -->
 <section class="cover">
-  <div class="logo"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#fff"/><path d="M6 20h5l3-9 4 13 3-8h5" fill="none" stroke="#1428a0" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>WELA</div>
-  <h0>Windows Event<br>Log Analyzer</h0>
+  <div class="logo"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#fff"/><circle cx="13.5" cy="13.5" r="7.5" fill="none" stroke="#1428a0" stroke-width="2.4"/><path d="M19 19l6 6" stroke="#1428a0" stroke-width="3" stroke-linecap="round"/><path d="M8.6 14h2.3l1.5-3.4 2.4 6.4 1.5-3h1.3" fill="none" stroke="#1428a0" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>LENS</div>
+  <h0>Log Event<br>Navigation System</h0>
   <div class="sub">Technical reference &amp; demo guide</div>
   <div class="desc">How every verdict is made — power cycles, the drive's part in them, whether that drive is a Samsung drive,
     and which app, update or user triggered them — with the reasons behind each design decision, the demo script,
@@ -114,7 +114,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
 <h1 id="contents" style="margin-top:0;padding-top:0;border-top:none">Contents</h1>
 <div class="toc" style="margin-top:12px">
   <a href="#glance"><span>1</span><div>At a glance<small>The pitch, the four questions, key numbers</small></div></a>
-  <a href="#why"><span>2</span><div>Why WELA exists<small>The claim problem and the approach</small></div></a>
+  <a href="#why"><span>2</span><div>Why LENS exists<small>The claim problem and the approach</small></div></a>
   <a href="#arch"><span>3</span><div>Architecture<small>Components, technology choices and why</small></div></a>
   <a href="#inputs"><span>4</span><div>Inputs: the logs<small>What to collect, and what is read from a folder</small></div></a>
   <a href="#pipeline"><span>5</span><div>The analysis pipeline<small>12 steps from raw events to verdicts</small></div></a>
@@ -127,30 +127,30 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
   <a href="#tour"><span>12</span><div>Tour of the application<small>Every screen, with what to point out</small></div></a>
   <a href="#exports"><span>13</span><div>Exports and command line<small>HTML, Excel, CSV, JSON, CLI</small></div></a>
   <a href="#testing"><span>14</span><div>Quality, testing and performance<small>56 tests, robustness, speed</small></div></a>
-  <a href="#config"><span>15</span><div>Configuration and tuning<small>catalog.py and wela_config.json</small></div></a>
+  <a href="#config"><span>15</span><div>Configuration and tuning<small>catalog.py and lens_config.json</small></div></a>
   <a href="#limits"><span>16</span><div>Limitations — and what to say<small>Honest caveats with mitigations</small></div></a>
   <a href="#demo"><span>17</span><div>Demo script and likely questions<small>15-minute run-through, Q&amp;A</small></div></a>
   <a href="#roadmap"><span>18</span><div>Roadmap<small>Validation, features, scale</small></div></a>
   <a href="#ai"><span>19</span><div>AI integration<small>Use cases, architecture, cost, guardrails</small></div></a>
-  <a href="#appx"><span>A</span><div>Appendix: event reference<small>Every event ID WELA reads</small></div></a>
+  <a href="#appx"><span>A</span><div>Appendix: event reference<small>Every event ID LENS reads</small></div></a>
   <a href="#gloss"><span>B</span><div>Appendix: glossary<small>Terms used in this document</small></div></a>
   <a href="#cmds"><span>C</span><div>Appendix: commands and files<small>Run, test, collect, configure</small></div></a>
 </div>
 <div class="callout" style="margin-top:18px"><b>How to read this.</b> Each chapter opens with a one-line takeaway (blue bar).
-  Tables hold the exact rules — every number in them comes from <code>wela/catalog.py</code> and <code>wela/engine.py</code> as committed on <code>main</code>.
+  Tables hold the exact rules — every number in them comes from <code>lens/catalog.py</code> and <code>lens/engine.py</code> as committed on <code>main</code>.
   Chapter 17 is the demo script for the meeting; chapter 16 lists the caveats to state up front.</div>
 
 <!-- ============================================================ 1 GLANCE -->
 <h1 id="glance" class="pg"><span class="n">1</span>At a glance</h1>
-<div class="lead">WELA turns a claim's Windows event logs into a verified, explainable story of every power cycle — in seconds, on the engineer's own PC.</div>
+<div class="lead">LENS turns a claim's Windows event logs into a verified, explainable story of every power cycle — in seconds, on the engineer's own PC.</div>
 <div class="callout"><b>The 30-second pitch.</b> Customers return SSDs after crashes, freezes and sudden power-offs. The PC's own Windows event logs
-  hold the evidence, but they are thousands of events spread over several logs. WELA reads them and, in seconds, rebuilds every power cycle;
+  hold the evidence, but they are thousands of events spread over several logs. LENS reads them and, in seconds, rebuilds every power cycle;
   shows whether the drive was misbehaving right before it; whether that drive was the Samsung drive; and whether an app, an update or the user
   triggered it. Every verdict comes with the events behind it and a confidence score, and anything uncertain is flagged for review.</div>
 
-<h2>The four questions WELA answers</h2>
+<h2>The four questions LENS answers</h2>
 <table class="t">
-  <thead><tr><th style="width:21%">Question</th><th style="width:43%">What WELA reports</th><th>Built from</th></tr></thead><tbody>
+  <thead><tr><th style="width:21%">Question</th><th style="width:43%">What LENS reports</th><th>Built from</th></tr></thead><tbody>
   <tr><td class="k">1 · How did it end?</td><td>Normal shutdown · restart · Fast Startup · hard shutdown (crash, power-button long-press, power lost while asleep, hang during shutdown, power loss) · sleep / hibernate / Modern Standby · undetermined</td><td>Kernel-General 12/13, EventLog 6005/6006/6008, Kernel-Power 41/42/107/109, User32 1074, WER 1001, Power-Troubleshooter 1</td></tr>
   <tr><td class="k">2 · Did the drive cause it?</td><td><span class="chip c-bad">Likely</span> <span class="chip c-warn">Possibly</span> <span class="chip c-acc">No drive evidence</span> <span class="chip c-nd">Can't tell</span> — plus the effect on the drive after boot</td><td>Storport (every level), disk, stornvme/storahci, NTFS, volmgr, WHEA, crash (bugcheck) codes</td></tr>
   <tr><td class="k">3 · Which drive?</td><td><span class="chip c-sam">Samsung</span> named or mapped · <span class="chip c-samp">Samsung?</span> probably · <span class="chip c-other">other drive</span> · not identified</td><td>Storport VendorId/ProductId/SerialNumber, Partition 1006 disk inventory per boot, PCI vendor IDs</td></tr>
@@ -171,7 +171,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
 <table class="t compact">
   <thead><tr><th style="width:20%">Principle</th><th>What it means in practice</th></tr></thead><tbody>
   <tr><td class="k">Explainable</td><td>Nothing is a black box: each verdict shows the evidence, the missing evidence, plain-language reasons and a confidence score. Rules live in one readable file.</td></tr>
-  <tr><td class="k">Conservative</td><td>WELA says "undetermined", "can't tell" or "not identified" instead of guessing. A quiet log is never presented as proof the drive is fine.</td></tr>
+  <tr><td class="k">Conservative</td><td>LENS says "undetermined", "can't tell" or "not identified" instead of guessing. A quiet log is never presented as proof the drive is fine.</td></tr>
   <tr><td class="k">Private</td><td>Runs on the engineer's PC; the web server binds to 127.0.0.1; no cloud, no telemetry.</td></tr>
   <tr><td class="k">Zero-install</td><td>Standard-library Python 3.9+; no packages needed on Windows. Works offline.</td></tr>
   <tr><td class="k">Tunable</td><td>Every event ID, weight, threshold and vendor rule is in <code>catalog.py</code> and can be overridden with a JSON file — no engine changes.</td></tr>
@@ -179,7 +179,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
 </tbody></table>
 
 <!-- ============================================================ 2 WHY -->
-<h1 id="why"><span class="n">2</span>Why WELA exists</h1>
+<h1 id="why"><span class="n">2</span>Why LENS exists</h1>
 <div class="lead">Claim analysis needs the same evidence-based answer every time — reading Event Viewer by hand is slow, inconsistent and easy to get wrong.</div>
 <h2>The problem</h2>
 <p>When an SSD comes back under claim, the key questions are about <b>power cycles</b>: did the PC shut down cleanly, crash, or lose power?
@@ -237,7 +237,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
   <text x="603" y="111" font-size="8.8" fill="#3a4256" text-anchor="middle">report.py: HTML · Excel</text><text x="603" y="123" font-size="8.8" fill="#3a4256" text-anchor="middle">CSV · JSON</text>
   <rect x="532" y="138" width="142" height="44" rx="10" fill="#fff" stroke="#14805a" stroke-width="1.4"/>
   <text x="603" y="157" font-size="10.5" font-weight="700" fill="#14805a" text-anchor="middle">Command line</text>
-  <text x="603" y="172" font-size="8.8" fill="#3a4256" text-anchor="middle">python -m wela analyze</text>
+  <text x="603" y="172" font-size="8.8" fill="#3a4256" text-anchor="middle">python -m lens analyze</text>
   <rect x="532" y="196" width="142" height="50" rx="10" fill="#f6f7fb" stroke="#dfe3ec"/>
   <text x="603" y="216" font-size="10.5" font-weight="700" fill="#3a4256" text-anchor="middle">store.py</text>
   <text x="603" y="231" font-size="8.8" fill="#6b7387" text-anchor="middle">cases/&lt;id&gt;: result + events</text>
@@ -247,13 +247,13 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 <h2>Components</h2>
 <table class="t compact">
   <thead><tr><th style="width:24%">File</th><th>Responsibility</th><th style="width:9%">Lines</th></tr></thead><tbody>
-  <tr><td class="mono">wela/parser.py</td><td>Reads <code>.evtx</code> (wevtutil, then PowerShell, then the optional python-evtx package on non-Windows) and XML exports into one normalised event record: UTC time, log, provider, event ID, record ID, level, data fields. From a folder it picks only System, Application and Storport (Operational, Health).</td><td>236</td></tr>
-  <tr><td class="mono">wela/catalog.py</td><td>The knowledge base: every power signal, storage and software event ID, evidence weight, threshold, crash code, vendor rule and shutdown-initiator pattern.</td><td>291</td></tr>
-  <tr><td class="mono">wela/engine.py</td><td>The analysis pipeline (chapter 5): from timeline to verdicts, confidence, drive identity, software trigger and the app / update lists.</td><td>1,498</td></tr>
-  <tr><td class="mono">wela/report.py</td><td>Self-contained HTML report, Excel workbook written directly as Office Open XML (no library), CSV and JSON.</td><td>451</td></tr>
-  <tr><td class="mono">wela/server.py</td><td>Local HTTP server and JSON API; native file / folder picker.</td><td>253</td></tr>
-  <tr><td class="mono">wela/store.py</td><td>Saves each case under <code>./cases/&lt;id&gt;</code> (result JSON + compressed events); keeps the open case's events in memory and builds the timeline's event index from them.</td><td>154</td></tr>
-  <tr><td class="mono">wela/demo.py</td><td>Synthetic demo logs covering every tricky scenario, with the expected answers the tests check.</td><td>312</td></tr>
+  <tr><td class="mono">lens/parser.py</td><td>Reads <code>.evtx</code> (wevtutil, then PowerShell, then the optional python-evtx package on non-Windows) and XML exports into one normalised event record: UTC time, log, provider, event ID, record ID, level, data fields. From a folder it picks only System, Application and Storport (Operational, Health).</td><td>236</td></tr>
+  <tr><td class="mono">lens/catalog.py</td><td>The knowledge base: every power signal, storage and software event ID, evidence weight, threshold, crash code, vendor rule and shutdown-initiator pattern.</td><td>291</td></tr>
+  <tr><td class="mono">lens/engine.py</td><td>The analysis pipeline (chapter 5): from timeline to verdicts, confidence, drive identity, software trigger and the app / update lists.</td><td>1,498</td></tr>
+  <tr><td class="mono">lens/report.py</td><td>Self-contained HTML report, Excel workbook written directly as Office Open XML (no library), CSV and JSON.</td><td>451</td></tr>
+  <tr><td class="mono">lens/server.py</td><td>Local HTTP server and JSON API; native file / folder picker.</td><td>253</td></tr>
+  <tr><td class="mono">lens/store.py</td><td>Saves each case under <code>./cases/&lt;id&gt;</code> (result JSON + compressed events); keeps the open case's events in memory and builds the timeline's event index from them.</td><td>154</td></tr>
+  <tr><td class="mono">lens/demo.py</td><td>Synthetic demo logs covering every tricky scenario, with the expected answers the tests check.</td><td>312</td></tr>
   <tr><td class="mono">web/ (app.js, app.css, index.html)</td><td>The UI — vanilla JavaScript and CSS, no frameworks or CDN, works offline; light and dark themes.</td><td>1,487</td></tr>
   <tr><td class="mono">tests/test_engine.py</td><td>56 automated tests (chapter 14).</td><td>616</td></tr>
 </tbody></table>
@@ -274,9 +274,9 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 
 <!-- ============================================================ 4 INPUTS -->
 <h1 id="inputs"><span class="n">4</span>Inputs: the logs</h1>
-<div class="lead">System is required; Application and Storport make the drive and software answers strong. From a folder WELA reads only these — the Partition log, which ties disk events to a drive, is added as a file.</div>
+<div class="lead">System is required; Application and Storport make the drive and software answers strong. From a folder LENS reads only these — the Partition log, which ties disk events to a drive, is added as a file.</div>
 <table class="t">
-  <thead><tr><th style="width:14%">Log</th><th style="width:36%">Collect with (admin command prompt)</th><th>What WELA uses it for</th><th style="width:13%">Needed?</th></tr></thead><tbody>
+  <thead><tr><th style="width:14%">Log</th><th style="width:36%">Collect with (admin command prompt)</th><th>What LENS uses it for</th><th style="width:13%">Needed?</th></tr></thead><tbody>
   <tr><td class="k">System</td><td class="mono">wevtutil epl System System.evtx</td><td>Boots and shutdowns (12/13, 6005/6006/6008, 41, 109, 1074), sleep, disk / stornvme / NTFS / volmgr / WHEA events, Windows Update, service failures, display driver timeouts</td><td><span class="chip c-bad">Required</span></td></tr>
   <tr><td class="k">Application</td><td class="mono">wevtutil epl Application Application.evtx</td><td>App crashes and hangs, Windows Error Reporting (incl. blue-screen reports), MSI installer events</td><td><span class="chip c-warn">Strongly recommended</span></td></tr>
   <tr><td class="k">Storport</td><td class="mono">wevtutil epl Microsoft-Windows-Storage-Storport/Operational Storport.evtx</td><td>Every Storport event at every level (timeouts, resets, latency reports); these events usually <b>name the drive</b> (vendor, product, serial)</td><td><span class="chip c-warn">Strongly recommended</span></td></tr>
@@ -285,7 +285,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
   <tr><td class="k">Setup</td><td class="mono">wevtutil epl Setup Setup.evtx</td><td>Windows servicing "a restart is needed" events</td><td><span class="chip c-nd">Optional</span><div class="small muted">add as a file</div></td></tr>
 </tbody></table>
 <ul>
-  <li>Give WELA a folder (searched recursively) or individual files; <code>.evtx</code> and <code>.xml</code> both work, and files can be mixed.</li>
+  <li>Give LENS a folder (searched recursively) or individual files; <code>.evtx</code> and <code>.xml</code> both work, and files can be mixed.</li>
   <li><b>From a folder only System, Application and Storport (Operational, Health) are read</b>, so a copy of <code>C:\Windows\System32\winevt\Logs</code> with hundreds of logs works as it is. Files are recognised by name — as winevt\Logs names them (<code>Microsoft-Windows-Storage-Storport%4Health.evtx</code>) or as exported (<code>Storport.evtx</code>, <code>PC01_System.evtx</code>); the rest are skipped and counted. A file added by itself is always read.</li>
   <li>All events are merged into one timeline in UTC; the UI and reports convert to the chosen time zone (UTC, IST, local, US, CET, China, Korea).</li>
   <li>A file that cannot be read is listed under Data quality with the reason; the rest of the analysis continues.</li>
@@ -312,7 +312,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
   <tr><td>12</td><td class="k">Result</td><td>Counts, power-cycle list, storage and software event lists, disk inventory, integrity report — saved as one JSON per case.</td><td>Feeds UI, reports, CLI and, later, AI.</td></tr>
 </tbody></table>
 
-<h2>Anatomy of one power cycle — the windows WELA looks at</h2>
+<h2>Anatomy of one power cycle — the windows LENS looks at</h2>
 <svg class="dia" viewBox="0 0 680 210">
   <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#cfd4de" stroke-width="2"/></pattern></defs>
   <rect x="20" y="96" width="330" height="22" rx="5" fill="#e8ecfb" stroke="#1428a0"/>
@@ -343,12 +343,12 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
   <text x="514" y="174" font-size="9" fill="#0a7f8f">drive: 60 s after</text>
   <text x="20" y="204" font-size="8.5" fill="#6b7387">Not to scale. For sleeps the windows sit around sleep entry and wake; lists can also start or end at a sleep. Lengths are settings in catalog.py.</text>
 </svg>
-<div class="callout"><b>Why "last sign of life"?</b> After a hard shutdown there is no shutdown event to anchor on, so WELA uses the last event any log
+<div class="callout"><b>Why "last sign of life"?</b> After a hard shutdown there is no shutdown event to anchor on, so LENS uses the last event any log
   recorded before the next boot. "−17 s" next to a drive event means it was logged 17 seconds before that point.</div>
 
 <!-- ============================================================ 6 CLASSIFY -->
 <h1 id="classify"><span class="n">6</span>How a power cycle is classified</h1>
-<div class="lead">For every boot, WELA asks: did the previous session stop cleanly, did Windows report an unclean stop, or is the evidence missing?</div>
+<div class="lead">For every boot, LENS asks: did the previous session stop cleanly, did Windows report an unclean stop, or is the evidence missing?</div>
 <table class="t">
   <thead><tr><th style="width:46%">Evidence</th><th>Verdict</th></tr></thead><tbody>
   <tr><td>1074 / 109 / 13 / 6006 in the last 30 min of the session</td><td><span class="chip c-ok">Clean stop</span> → <b>restart</b> (1074 says restart, or the next boot follows within 5 min) or <b>shutdown</b></td></tr>
@@ -495,7 +495,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 </svg>
 <h2>Making the match reliable</h2>
 <table class="t compact">
-  <thead><tr><th style="width:28%">Situation</th><th>How WELA handles it</th></tr></thead><tbody>
+  <thead><tr><th style="width:28%">Situation</th><th>How LENS handles it</th></tr></thead><tbody>
   <tr><td class="k">How Samsung is recognised</td><td>"Samsung" anywhere in the event · PCI vendor ID <code>144D</code> in a device path · a Samsung <code>MZ…</code> part number in a model field (OEM drives such as <code>MZVL2512HCJQ-00B00</code>).</td></tr>
   <tr><td class="k">Storport cuts the name at 16 characters</td><td><code>SAMSUNG MZVL2512</code> (Storport) and <code>SAMSUNG MZVL2512HCJQ-00B00</code> (Partition) are recognised as one drive by prefix.</td></tr>
   <tr><td class="k">Serial in different formats</td><td>Case and punctuation are ignored; one log reporting the NVMe EUI-64 (<code>0025_3881_…</code>) and the other the real serial still merge when the models match.</td></tr>
@@ -527,7 +527,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 
 <!-- ============================================================ 10 SOFTWARE -->
 <h1 id="software"><span class="n">10</span>What triggered it? Software</h1>
-<div class="lead">Windows records who asked for a shutdown (User32 1074), and apps, updates, installers and services leave their own trail — WELA reads both.</div>
+<div class="lead">Windows records who asked for a shutdown (User32 1074), and apps, updates, installers and services leave their own trail — LENS reads both.</div>
 <h2>Sources</h2>
 <table class="t compact">
   <thead><tr><th style="width:23%">Source</th><th>Events (log)</th><th style="width:34%">Tells us</th></tr></thead><tbody>
@@ -577,7 +577,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
   <tr><td class="k">User request</td><td>Explorer, RuntimeBroker, StartMenuExperienceHost, ShellExperienceHost, Winlogon, LogonUI</td></tr>
 </tbody></table>
 <p class="small">When the process and the reason disagree, the reason code wins for updates: "Update and restart" from the Start menu is requested by the user's shell, but the reason code says OS servicing — so it counts as Windows Update.</p>
-<p class="small"><b>Whose account.</b> The request names the account it ran under, shown with its kind: a <i>user account</i>, or Windows itself (SYSTEM), a service or the computer's own account. Whether a user account is an administrator is not in these logs (only in the Security log, which WELA does not read).</p>
+<p class="small"><b>Whose account.</b> The request names the account it ran under, shown with its kind: a <i>user account</i>, or Windows itself (SYSTEM), a service or the computer's own account. Whether a user account is an administrator is not in these logs (only in the Security log, which LENS does not read).</p>
 
 <h2>The verdict rules</h2>
 <table class="t">
@@ -636,7 +636,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 
 <!-- ============================================================ 11 QUALITY -->
 <h1 id="quality"><span class="n">11</span>Data-quality checks</h1>
-<div class="lead">Before trusting any verdict, WELA checks the logs themselves — and lowers confidence or refuses to guess where they are incomplete.</div>
+<div class="lead">Before trusting any verdict, LENS checks the logs themselves — and lowers confidence or refuses to guess where they are incomplete.</div>
 <table class="t">
   <thead><tr><th style="width:24%">Check</th><th>How</th><th style="width:30%">Effect</th></tr></thead><tbody>
   <tr><td class="k">Missing logs</td><td>System / Application / Storport expected</td><td>Warning; affected verdicts say which log was missing</td></tr>
@@ -652,7 +652,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 
 <!-- ============================================================ 12 TOUR -->
 <h1 id="tour"><span class="n">12</span>Tour of the application</h1>
-<div class="lead">Six tabs per case. Start the app with <code>python run_wela.py</code>; the browser opens at http://127.0.0.1:8765.</div>
+<div class="lead">Six tabs per case. Start the app with <code>python run_lens.py</code>; the browser opens at http://127.0.0.1:8765.</div>
 <figure><img src="img/s_overview.jpg" style="max-height:150mm;object-fit:cover;object-position:top"><figcaption><b>Overview.</b> Tiles per power-cycle type (click to filter). "Did the drive cause it?" with the teal <i>with Samsung drive problems</i> tile and Samsung badges on the suspect power cycles. "What triggered it?" breaks power cycles down by software trigger (click a bar to list them). Hard-shutdown causes, needs-review list, log coverage, storage and app/update summaries follow below.</figcaption></figure>
 <figure class="pb"><img src="img/s_cycles.jpg"><figcaption><b>Power cycles.</b> One row per power cycle and sleep: time, type, detail, off time, confidence, drive state with Samsung badge (teal stripe on the row), drive verdict, software trigger with its strength and confidence, flags. Filters on one row — <i>All, Shutdown, Restart, Hard, Sleep</i> and <i>Samsung drive</i>; <i>Undetermined, Needs review, Drive suspected, Drive errors after</i> and <i>Triggered by software</i> sit under <b>More</b>, whose button names the one in use. Long lists show 150 rows at once and add the next as you scroll. Search: a number finds those event IDs exactly — in the evidence and in each power cycle's drive and app lists; anything else searches the text.</figcaption></figure>
 <div class="side">
@@ -706,13 +706,13 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 </div>
 <p class="small">Times are converted to the time zone chosen in the UI (e.g. IST). Frozen header row and auto-filter on every sheet.</p>
 <h2>Command line</h2>
-<pre class="code"><span class="c"># start the UI (default) — or press F5 in VS Code and pick "WELA: start UI"</span>
-python run_wela.py
+<pre class="code"><span class="c"># start the UI (default) — or press F5 in VS Code and pick "LENS: start UI"</span>
+python run_lens.py
 <span class="c"># analyse without the UI and write a report (.html, .xlsx, .csv or .json); --tz is minutes from UTC (330 = IST)</span>
 <span class="c"># from a folder only System, Application and Storport are read; the other logs are counted as skipped</span>
-python -m wela analyze "D:\Claims\DELL-123\Logs" --out report.xlsx --tz 330
+python -m lens analyze "D:\Claims\DELL-123\Logs" --out report.xlsx --tz 330
 <span class="c"># write the demo logs to a folder</span>
-python -m wela demo demo_logs
+python -m lens demo demo_logs
 <span class="c"># run the tests</span>
 python -m unittest discover -s tests -v</pre>
 <p>The CLI prints one line per power cycle, e.g.</p>
@@ -766,7 +766,7 @@ python -m unittest discover -s tests -v</pre>
 
 <!-- ============================================================ 15 CONFIG -->
 <h1 id="config"><span class="n">15</span>Configuration and tuning</h1>
-<div class="lead">All knowledge lives in <code>wela/catalog.py</code>; a <code>wela_config.json</code> next to <code>run_wela.py</code> overrides any part of it without code changes.</div>
+<div class="lead">All knowledge lives in <code>lens/catalog.py</code>; a <code>lens_config.json</code> next to <code>run_lens.py</code> overrides any part of it without code changes.</div>
 <table class="t">
   <thead><tr><th style="width:24%">Section</th><th>Contents</th></tr></thead><tbody>
   <tr><td class="k">signals / signal_labels</td><td>Provider + event ID for every power signal (boot, stop, unclean, sleep …) and its display label</td></tr>
@@ -802,18 +802,18 @@ python -m unittest discover -s tests -v</pre>
     <tr><td>review_threshold — confidence for "needs review"</td><td>0.6</td></tr>
   </tbody></table>
 </div>
-<pre class="code"><span class="c">// wela_config.json — only the keys you want to change</span>
+<pre class="code"><span class="c">// lens_config.json — only the keys you want to change</span>
 { <span class="s">"settings"</span>: { <span class="s">"drive_window_s"</span>: 120, <span class="s">"software_window_s"</span>: 1800 },
   <span class="s">"highlight_vendor"</span>: <span class="s">"Samsung"</span> }</pre>
-<p class="small">The most-used settings are also on the home screen under <i>Analysis settings</i>, per analysis. Which logs a folder gives is decided in <code>wela/parser.py</code> (<code>FOLDER_LOGS</code>, <code>folder_log</code>).</p>
+<p class="small">The most-used settings are also on the home screen under <i>Analysis settings</i>, per analysis. Which logs a folder gives is decided in <code>lens/parser.py</code> (<code>FOLDER_LOGS</code>, <code>folder_log</code>).</p>
 
 <!-- ============================================================ 16 LIMITS -->
 <h1 id="limits"><span class="n">16</span>Limitations — and what to say</h1>
-<div class="lead">Stating the limits up front builds trust: WELA is precise about what the logs show and explicit about what they cannot show.</div>
+<div class="lead">Stating the limits up front builds trust: LENS is precise about what the logs show and explicit about what they cannot show.</div>
 <table class="t">
   <thead><tr><th style="width:33%">Limitation</th><th>What to say / mitigation</th></tr></thead><tbody>
   <tr><td class="k">Validated on synthetic logs so far</td><td>Every rule is tested against a demo case with known answers. Next step: run on 20–30 closed claims with known outcomes and on lab PCs where each power-cycle type is triggered on purpose, then tune the catalog.</td></tr>
-  <tr><td class="k">Storport field names and a few event IDs confirmed only in the demo</td><td>WELA reads the standard Storport fields and also scans every field for "Samsung", PCI 144D and MZ… part numbers. First real-claim check: open a Storport event in the drawer and confirm the "Drive" line says <i>named in the event</i>. Lab-test Windows Update 21/22, Servicing 4 and the 7031 recovery action.</td></tr>
+  <tr><td class="k">Storport field names and a few event IDs confirmed only in the demo</td><td>LENS reads the standard Storport fields and also scans every field for "Samsung", PCI 144D and MZ… part numbers. First real-claim check: open a Storport event in the drawer and confirm the "Drive" line says <i>named in the event</i>. Lab-test Windows Update 21/22, Servicing 4 and the 7031 recovery action.</td></tr>
   <tr><td class="k">The logs live on the drive under suspicion</td><td>A drive that froze may never have saved its last events, so "No drive evidence" is not "healthy". Cross-check with the drive's own SMART and error logs.</td></tr>
   <tr><td class="k">"Probably" drive attributions</td><td>Unnamed events are only attributed when one drive exists, and are labelled. Add the Partition log — as a file, it is not read from a folder — to turn more of them into certain matches.</td></tr>
   <tr><td class="k">Who asked for a shutdown is not always logged</td><td>No 1074 means "Not logged"; restart vs. shutdown then falls back to the stop → boot gap (5 min), flagged as inferred.</td></tr>
@@ -827,7 +827,7 @@ python -m unittest discover -s tests -v</pre>
 <!-- ============================================================ 17 DEMO -->
 <h1 id="demo" class="pg"><span class="n">17</span>Demo script and likely questions</h1>
 <div class="lead">About 15 minutes: problem → one click → four questions answered with evidence → exports → what's next.</div>
-<div class="callout"><b>Before the meeting.</b> Check out <code>main</code> · run <code>python run_wela.py</code> · set Time to <b>IST</b> · click <b>Try demo data</b> once to warm up ·
+<div class="callout"><b>Before the meeting.</b> Check out <code>main</code> · run <code>python run_lens.py</code> · set Time to <b>IST</b> · click <b>Try demo data</b> once to warm up ·
   have a real (closed) claim's logs ready as a backup · keep this document open on chapter 16.</div>
 <div class="step"><div class="tm">0:00<br>1 min</div><div><b>The problem.</b> "When an SSD comes back after crashes or sudden shutdowns, we need to know what happened to the PC, whether our drive was involved, and whether something else — Windows Update, an app, the user — triggered it. That evidence is in the Windows logs, but reading them by hand takes hours."</div></div>
 <div class="step"><div class="tm">1:00<br>1 min</div><div><b>One click.</b> Home → <i>Try demo data</i>. <b class="say">Say:</b> "Four logs, 491 events, analysed in under a second, on this PC — nothing installed, nothing sent anywhere."</div></div>
@@ -849,7 +849,7 @@ python -m unittest discover -s tests -v</pre>
   <tr><td class="k">What if the PC has two drives or a USB stick?</td><td>Disk numbers are mapped per boot; unnamed events are not guessed when there are two drives (demo S3).</td></tr>
   <tr><td class="k">Is customer data safe?</td><td>Everything runs on the engineer's PC; the server only listens on 127.0.0.1; there are no external calls.</td></tr>
   <tr><td class="k">How long does it take?</td><td>About 4.7 s for ~200,000 events (analysis), plus reading the files.</td></tr>
-  <tr><td class="k">Which logs do we need from the customer?</td><td>System (required); Application and Storport (strongly recommended) — or simply a copy of the whole <code>winevt\Logs</code> folder: WELA reads only those from a folder. Partition (optional) as a file of its own. One <code>wevtutil</code> command each — a collection script is on the roadmap.</td></tr>
+  <tr><td class="k">Which logs do we need from the customer?</td><td>System (required); Application and Storport (strongly recommended) — or simply a copy of the whole <code>winevt\Logs</code> folder: LENS reads only those from a folder. Partition (optional) as a file of its own. One <code>wevtutil</code> command each — a collection script is on the roadmap.</td></tr>
   <tr><td class="k">Why not let AI decide?</td><td>Claim decisions must be reproducible and auditable. Rules give the same answer every time with the evidence. AI is best used on top: summarising, answering questions, triaging, spotting patterns.</td></tr>
   <tr><td class="k">Can the rules be changed?</td><td>Yes — all in <code>catalog.py</code>, or a JSON override file; no engine changes.</td></tr>
   <tr><td class="k">What does it take to run?</td><td>Python 3.9+ on Windows; no packages. ~4,900 lines of code, standard library only.</td></tr>
@@ -863,7 +863,7 @@ python -m unittest discover -s tests -v</pre>
   <tr><td colspan="3" style="background:var(--accent-soft);font-weight:700;color:var(--accent)">Now — validate and harden</td></tr>
   <tr><td class="k">Validate on 20–30 closed claims</td><td>Measure agreement with known outcomes; tune weights and thresholds; confirm Storport field names on real logs</td><td>M</td></tr>
   <tr><td class="k">Lab validation</td><td>Trigger each power-cycle type on purpose (update restart, installer restart, long-press, power pull, crash) and check the verdicts</td><td>S</td></tr>
-  <tr><td class="k">One-click log collection</td><td>A signed script for customers / field engineers that exports the logs WELA reads (plus Partition) into one zip</td><td>S</td></tr>
+  <tr><td class="k">One-click log collection</td><td>A signed script for customers / field engineers that exports the logs LENS reads (plus Partition) into one zip</td><td>S</td></tr>
   <tr><td class="k">Windows package</td><td>Single executable so engineers do not need Python</td><td>S</td></tr>
   <tr><td colspan="3" style="background:var(--accent-soft);font-weight:700;color:var(--accent)">Next — more evidence</td></tr>
   <tr><td class="k">Drive-side data import</td><td>NVMe SMART / health log and error log: automatic power-cycle and unsafe-shutdown cross-check, media errors next to each power cycle</td><td>M</td></tr>
@@ -872,7 +872,7 @@ python -m unittest discover -s tests -v</pre>
   <tr><td colspan="3" style="background:var(--accent-soft);font-weight:700;color:var(--accent)">Later — scale</td></tr>
   <tr><td class="k">Batch mode</td><td>Analyse a folder of claims at once; one summary row per claim</td><td>S</td></tr>
   <tr><td class="k">Claims dashboard</td><td>Trends by drive model, firmware, OEM platform and Windows build (e.g. reset storms after a firmware release)</td><td>L</td></tr>
-  <tr><td class="k">Claim-system integration</td><td>Attach WELA results to the claim record automatically through an API</td><td>M</td></tr>
+  <tr><td class="k">Claim-system integration</td><td>Attach LENS results to the claim record automatically through an API</td><td>M</td></tr>
   <tr><td class="k">AI layer</td><td>Chapter 19</td><td>S → L</td></tr>
 </tbody></table>
 <p class="small">Effort: S = days, M = a few weeks, L = a quarter-scale project — rough sizes for planning, to be refined.</p>
@@ -888,23 +888,23 @@ python -m unittest discover -s tests -v</pre>
 <h2>Use cases</h2>
 <table class="t">
   <thead><tr><th style="width:21%">Use case</th><th>What it does</th><th style="width:24%">How</th><th style="width:7%">Effort</th></tr></thead><tbody>
-  <tr><td class="k">1 · Claim summary writer</td><td>Writes the plain-language case summary for the claim record — what happened, when, whether the Samsung drive was involved — citing power-cycle IDs and events; optionally in the customer's language.</td><td>One LLM call on WELA's result (not the raw logs)</td><td>S</td></tr>
-  <tr><td class="k">2 · "Ask the case"</td><td>Chat in the UI: "What happened in the 10 minutes before the crash on 4 September?" — the model looks up events through WELA's own local API and answers with links to the evidence.</td><td>LLM with tool use calling WELA's endpoints</td><td>M</td></tr>
+  <tr><td class="k">1 · Claim summary writer</td><td>Writes the plain-language case summary for the claim record — what happened, when, whether the Samsung drive was involved — citing power-cycle IDs and events; optionally in the customer's language.</td><td>One LLM call on LENS's result (not the raw logs)</td><td>S</td></tr>
+  <tr><td class="k">2 · "Ask the case"</td><td>Chat in the UI: "What happened in the 10 minutes before the crash on 4 September?" — the model looks up events through LENS's own local API and answers with links to the evidence.</td><td>LLM with tool use calling LENS's endpoints</td><td>M</td></tr>
   <tr><td class="k">3 · Unknown-event explainer</td><td>Explains events the catalog does not know yet (new Storport or driver IDs) and drafts catalog entries for an engineer to approve.</td><td>LLM on the unknown events + catalog</td><td>M</td></tr>
   <tr><td class="k">4 · Claim triage at scale</td><td>Sorts incoming claims into buckets — drive suspected, software-triggered, power / user, insufficient logs — to prioritise engineering time.</td><td>Small, fast model over batch results</td><td>M</td></tr>
   <tr><td class="k">5 · Confidence calibration</td><td>Learns the evidence weights from closed claims with known outcomes, so "80 %" really means 80 %.</td><td>Classical machine learning (e.g. logistic regression) — not an LLM</td><td>M</td></tr>
   <tr><td class="k">6 · Fleet patterns</td><td>Finds recurring patterns across many claims by model, firmware and platform, and describes them for engineers.</td><td>Statistics + LLM descriptions</td><td>L</td></tr>
-  <tr><td class="k">7 · Crash-dump assistant</td><td>Summarises debugger output for a crash dump next to the WELA crash verdict.</td><td>LLM on debugger text</td><td>M</td></tr>
+  <tr><td class="k">7 · Crash-dump assistant</td><td>Summarises debugger output for a crash dump next to the LENS crash verdict.</td><td>LLM on debugger text</td><td>M</td></tr>
 </tbody></table>
 <h2>Architecture for the AI layer</h2>
 <svg class="dia" viewBox="0 0 680 150">
   <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6b7387"/></marker></defs>
   <g font-size="9.5" text-anchor="middle">
-    <rect x="4" y="30" width="112" height="62" rx="9" fill="#e8ecfb" stroke="#1428a0"/><text x="60" y="52" font-weight="700" fill="#1428a0">WELA engine</text><text x="60" y="67" fill="#3a4256">local · rules</text><text x="60" y="80" fill="#3a4256">verdicts + evidence</text>
+    <rect x="4" y="30" width="112" height="62" rx="9" fill="#e8ecfb" stroke="#1428a0"/><text x="60" y="52" font-weight="700" fill="#1428a0">LENS engine</text><text x="60" y="67" fill="#3a4256">local · rules</text><text x="60" y="80" fill="#3a4256">verdicts + evidence</text>
     <rect x="140" y="30" width="112" height="62" rx="9" fill="#fff" stroke="#6b7387"/><text x="196" y="52" font-weight="700" fill="#161b29">Case brief</text><text x="196" y="67" fill="#3a4256">result JSON, compacted</text><text x="196" y="80" fill="#3a4256">~190 tokens / cycle</text>
     <rect x="276" y="30" width="112" height="62" rx="9" fill="#fcf1de" stroke="#b06d12"/><text x="332" y="52" font-weight="700" fill="#b06d12">Redact</text><text x="332" y="67" fill="#3a4256">hash serials, host</text><text x="332" y="80" fill="#3a4256">and user names</text>
     <rect x="412" y="30" width="122" height="62" rx="9" fill="#eee9fb" stroke="#6a4bc4"/><text x="473" y="52" font-weight="700" fill="#6a4bc4">Claude</text><text x="473" y="67" fill="#3a4256">Anthropic API, or via</text><text x="473" y="80" fill="#3a4256">Bedrock · Vertex · Foundry</text>
-    <rect x="558" y="30" width="118" height="62" rx="9" fill="#e3f4ec" stroke="#14805a"/><text x="617" y="52" font-weight="700" fill="#14805a">Shown in WELA</text><text x="617" y="67" fill="#3a4256">labelled "AI", linked</text><text x="617" y="80" fill="#3a4256">to evidence · reviewed</text>
+    <rect x="558" y="30" width="118" height="62" rx="9" fill="#e3f4ec" stroke="#14805a"/><text x="617" y="52" font-weight="700" fill="#14805a">Shown in LENS</text><text x="617" y="67" fill="#3a4256">labelled "AI", linked</text><text x="617" y="80" fill="#3a4256">to evidence · reviewed</text>
     <line x1="118" y1="61" x2="136" y2="61" stroke="#6b7387" stroke-width="1.4" marker-end="url(#ar3)"/>
     <line x1="254" y1="61" x2="272" y2="61" stroke="#6b7387" stroke-width="1.4" marker-end="url(#ar3)"/>
     <line x1="390" y1="61" x2="408" y2="61" stroke="#6b7387" stroke-width="1.4" marker-end="url(#ar3)"/>
@@ -946,7 +946,7 @@ brief[<span class="s">"items"</span>] = [{<span class="s">"id"</span>: i[<span c
 response = client.messages.create(
     model=<span class="s">"claude-opus-5-5"</span>,
     max_tokens=16000,
-    system=<span class="s">"You write claim-ready summaries of WELA results. Use only the facts given, cite power-cycle IDs, "</span>
+    system=<span class="s">"You write claim-ready summaries of LENS results. Use only the facts given, cite power-cycle IDs, "</span>
            <span class="s">"and never change or second-guess a verdict."</span>,
     messages=[{<span class="s">"role"</span>: <span class="s">"user"</span>, <span class="s">"content"</span>: json.dumps(brief)}],
 )
@@ -955,14 +955,14 @@ summary = next(b.text <span class="k">for</span> b <span class="k">in</span> res
 <table class="t compact">
   <thead><tr><th style="width:12%">Phase</th><th>Scope</th><th style="width:36%">Success measure</th></tr></thead><tbody>
   <tr><td class="k">1</td><td>Claim summary writer, pilot on closed claims, engineer approves every summary</td><td>Summaries rated correct; time saved per claim</td></tr>
-  <tr><td class="k">2</td><td>"Ask the case" chat in the UI, tool access to WELA's local API</td><td>Engineers find evidence faster; answers always cite events</td></tr>
+  <tr><td class="k">2</td><td>"Ask the case" chat in the UI, tool access to LENS's local API</td><td>Engineers find evidence faster; answers always cite events</td></tr>
   <tr><td class="k">3</td><td>Triage at scale + confidence calibration from closed claims</td><td>Triage agrees with engineers; calibrated confidence</td></tr>
   <tr><td class="k">4</td><td>Fleet patterns across claims</td><td>New, confirmed drive / firmware / platform patterns</td></tr>
 </tbody></table>
 
 <!-- ============================================================ APPENDIX A -->
 <h1 id="appx"><span class="n">A</span>Appendix: event reference</h1>
-<div class="lead">Every event WELA reads, as configured in <code>catalog.py</code> on <code>main</code>.</div>
+<div class="lead">Every event LENS reads, as configured in <code>catalog.py</code> on <code>main</code>.</div>
 <h2>Power signals</h2>
 <table class="t compact">
   <thead><tr><th style="width:30%">Provider · ID</th><th>Meaning</th></tr></thead><tbody>
@@ -1022,12 +1022,12 @@ summary = next(b.text <span class="k">for</span> b <span class="k">in</span> res
   <tr><td class="k">Kernel-Power 41 / 6008</td><td>Events written at the next boot when the previous shutdown was not clean.</td></tr>
   <tr><td class="k">User32 1074</td><td>The event that records who asked Windows to shut down or restart, and why.</td></tr>
   <tr><td class="k">Reason code</td><td>The numeric reason in 1074 (Windows <code>SHTDN_REASON_*</code>): planned flag, major and minor reason; independent of language.</td></tr>
-  <tr><td class="k">Storport</td><td>Windows' storage port driver framework; its Operational log records timeouts, resets and latency for each drive, and WELA reads its Health log the same way.</td></tr>
+  <tr><td class="k">Storport</td><td>Windows' storage port driver framework; its Operational log records timeouts, resets and latency for each drive, and LENS reads its Health log the same way.</td></tr>
   <tr><td class="k">stornvme / storahci</td><td>Windows' NVMe and SATA (AHCI) drivers. Event 129 = "reset to device".</td></tr>
   <tr><td class="k">WHEA</td><td>Windows Hardware Error Architecture — corrected and fatal hardware errors (PCIe, CPU, memory).</td></tr>
   <tr><td class="k">Partition / Diagnostic 1006</td><td>Disk inventory event logged at every boot: disk number, model, serial, firmware, bus type.</td></tr>
   <tr><td class="k">EUI-64</td><td>A 64-bit NVMe identifier that some Windows builds report in place of the serial number.</td></tr>
-  <tr><td class="k">Drive window</td><td>The 60 s before power-off and the 60 s after boot that WELA checks for storage events.</td></tr>
+  <tr><td class="k">Drive window</td><td>The 60 s before power-off and the 60 s after boot that LENS checks for storage events.</td></tr>
   <tr><td class="k">App / update list</td><td>The app, update and service events shown with a power cycle: from the boot / wake that ended the one before to its power-off ("before"), and from its boot / wake to the next power-off ("after").</td></tr>
   <tr><td class="k">Needs review</td><td>Confidence below 60 % or any warning flag on a verdict.</td></tr>
   <tr><td class="k">SMART Unsafe Shutdowns</td><td>The drive's own counter of power losses without a clean shutdown notification.</td></tr>
@@ -1038,10 +1038,10 @@ summary = next(b.text <span class="k">for</span> b <span class="k">in</span> res
 <h1 id="cmds"><span class="n">C</span>Appendix: commands and files</h1>
 <h2>Run</h2>
 <pre class="code">git checkout main
-python run_wela.py                                    <span class="c"># UI at http://127.0.0.1:8765 (next free port if busy)</span>
-python -m wela serve --port 8765 --no-browser
-python -m wela analyze &lt;folder or files&gt; --out report.html --tz 330
-python -m wela demo demo_logs
+python run_lens.py                                    <span class="c"># UI at http://127.0.0.1:8765 (next free port if busy)</span>
+python -m lens serve --port 8765 --no-browser
+python -m lens analyze &lt;folder or files&gt; --out report.html --tz 330
+python -m lens demo demo_logs
 python -m unittest discover -s tests -v              <span class="c"># 56 tests</span></pre>
 <h2>Collect logs on the customer PC (administrator command prompt)</h2>
 <pre class="code">wevtutil epl System System.evtx
@@ -1051,8 +1051,8 @@ wevtutil epl Microsoft-Windows-Storage-Storport/Health Storport-Health.evtx
 wevtutil epl Microsoft-Windows-Partition/Diagnostic Partition.evtx   <span class="c"># optional: add as a file</span>
 wevtutil epl Setup Setup.evtx                                         <span class="c"># optional: add as a file</span></pre>
 <h2>Repository layout</h2>
-<pre class="code">run_wela.py            start the UI
-wela/
+<pre class="code">run_lens.py            start the UI
+lens/
   parser.py            .evtx (wevtutil / PowerShell / python-evtx) and .xml -&gt; events;
                        which logs a folder gives
   catalog.py           event IDs, weights, thresholds, drive vendors, software events  &lt;- tune here

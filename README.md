@@ -1,4 +1,4 @@
-# WELA — Windows Event Log Analyzer
+# LENS — Log Event Navigation System
 
 Rebuilds every **power cycle** (normal shutdown, restart, hard shutdown, sleep / hibernate / Modern Standby)
 from a claim's Windows event logs, shows what the **SSD** was doing around each one — and **which drive** it was,
@@ -14,22 +14,22 @@ and flags anything uncertain.
 Needs Python 3.9+ (python.org installer, "Add to PATH").
 
 ```bash
-python run_wela.py
+python run_lens.py
 ```
 
 Your browser opens at `http://127.0.0.1:8765`. Paste a folder or `.evtx` paths (or use **Browse**), then click **Analyze**.
-From a folder (e.g. a copy of `C:\Windows\System32\winevt\Logs`) WELA reads only **System**, **Application** and
+From a folder (e.g. a copy of `C:\Windows\System32\winevt\Logs`) LENS reads only **System**, **Application** and
 **Storport** (Operational and Health) and skips every other log; a file you add by itself is always read.
 Click **Try demo data** to see a synthetic case with every tricky scenario.
 
-In **VS Code**: open this folder, then press **F5** and pick **WELA: start UI**. The Run menu also has a CLI launch and a test launch.
+In **VS Code**: open this folder, then press **F5** and pick **LENS: start UI**. The Run menu also has a CLI launch and a test launch.
 
 ### Command line
 
 ```bash
-python -m wela analyze "D:\Claims\DELL-123\Logs" --out report.html --tz 330
-python -m wela analyze System.evtx Application.evtx --out report.xlsx
-python -m wela analyze System.evtx --out report.xlsx --names   # keep people's account names (hidden by default)
+python -m lens analyze "D:\Claims\DELL-123\Logs" --out report.html --tz 330
+python -m lens analyze System.evtx Application.evtx --out report.xlsx
+python -m lens analyze System.evtx --out report.xlsx --names   # keep people's account names (hidden by default)
 python -m unittest discover -s tests -v
 ```
 
@@ -123,8 +123,8 @@ Partition and Setup are not read from a folder: add them as files of their own.
     log once per case (`/api/cases/<id>/index`), so the line moves with no round trip; what each event says comes
     from `/api/cases/<id>/rows` 256 at a time and is kept.
 
-All event IDs, weights, vendor rules and thresholds live in `wela/catalog.py`. Override any of them with `wela_config.json`
-next to `run_wela.py`, e.g.
+All event IDs, weights, vendor rules and thresholds live in `lens/catalog.py`. Override any of them with `lens_config.json`
+next to `run_lens.py`, e.g.
 
 ```json
 { "settings": { "drive_window_s": 120, "restart_gap_s": 600, "software_window_s": 1800 } }
@@ -133,8 +133,8 @@ next to `run_wela.py`, e.g.
 ## Project layout
 
 ```
-run_wela.py            start the UI
-wela/
+run_lens.py            start the UI
+lens/
   parser.py            .evtx (wevtutil / PowerShell / python-evtx) and .xml -> events; which logs a folder gives
   catalog.py           event IDs, weights, thresholds, drive vendors, software events  <- tune here
   engine.py            timeline, integrity, boots, sessions, classification, sleep, drive identity +
@@ -145,14 +145,14 @@ wela/
   demo.py              synthetic demo logs with expected verdicts
 web/                   UI (vanilla HTML/CSS/JS, works offline)
 tests/                 unittest suite (demo scenario, rule tests, random-input robustness test)
-docs/                  team walkthrough (.pptx / .pdf) and WELA-technical-reference.pdf (how every
+docs/                  team walkthrough (.pptx / .pdf) and LENS-technical-reference.pdf (how every
                        verdict is made, demo script, limitations, roadmap, AI integration);
                        src/ holds its HTML source and screenshots (print command at the top)
 ```
 
 ## Before relying on it
 
-The event IDs are the standard Windows ones, but validate on your own data: run WELA on 20–30 closed claims with
+The event IDs are the standard Windows ones, but validate on your own data: run LENS on 20–30 closed claims with
 known answers, and on lab machines where you trigger each power cycle type on purpose. Then tune `catalog.py`.
 In particular, check on real claims that the Storport events name the drive (open one in the drawer — the Drive line
 says how it was identified), and trigger a Windows Update restart, an installer restart and a forced power-off

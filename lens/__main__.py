@@ -1,8 +1,8 @@
 """Command line:
-    python -m wela                      start the UI (default)
-    python -m wela serve [--port 8765] [--no-browser]
-    python -m wela analyze <path> [<path> ...] [--out report.html|.xlsx|.csv|.json] [--tz 330] [--names]
-    python -m wela demo [folder]        write demo logs
+    python -m lens                      start the UI (default)
+    python -m lens serve [--port 8765] [--no-browser]
+    python -m lens analyze <path> [<path> ...] [--out report.html|.xlsx|.csv|.json] [--tz 330] [--names]
+    python -m lens demo [folder]        write demo logs
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from . import catalog, demo, engine, parser, report
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="wela", description="Windows Event Log Analyzer")
+    ap = argparse.ArgumentParser(prog="lens", description="LENS - Log Event Navigation System")
     sub = ap.add_subparsers(dest="cmd")
     s = sub.add_parser("serve", help="start the local UI")
     s.add_argument("--port", type=int, default=8765)

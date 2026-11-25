@@ -2,7 +2,8 @@
 
 Everything the engine "knows" about Windows events lives here, so rules can be
 reviewed and tuned by the team without touching the engine logic. Any key can
-be overridden by a `wela_config.json` file next to run_wela.py (same shape).
+be overridden by a `lens_config.json` file next to run_lens.py (same shape; a `wela_config.json` from before
+the rename to LENS is still read).
 """
 from __future__ import annotations
 
@@ -275,7 +276,8 @@ def load_config(path: str | None = None) -> dict:
     cfg = copy.deepcopy(DEFAULTS)
     if path is None:
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        path = os.path.join(here, "wela_config.json")
+        names = ("lens_config.json", "wela_config.json")   # the second: its name before the rename to LENS
+        path = next((os.path.join(here, n) for n in names if os.path.isfile(os.path.join(here, n))), None)
     if path and os.path.isfile(path):
         with open(path, "r", encoding="utf-8") as fh:
             user = json.load(fh)

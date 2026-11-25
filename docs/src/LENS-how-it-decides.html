@@ -1,16 +1,16 @@
 <!doctype html>
-<!-- Source of docs/WELA-how-it-decides.pdf. Edit this file, then print it from the repository root with Chrome:
+<!-- Source of docs/LENS-how-it-decides.pdf. Edit this file, then print it from the repository root with Chrome:
        chrome --headless=new --no-pdf-header-footer --generate-pdf-document-outline --virtual-time-budget=5000
-              --print-to-pdf=docs/WELA-how-it-decides.pdf file:///<full path>/docs/src/WELA-how-it-decides.html
+              --print-to-pdf=docs/LENS-how-it-decides.pdf file:///<full path>/docs/src/LENS-how-it-decides.html
      (on macOS chrome is "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome").
-     Every number here comes from wela/catalog.py and wela/engine.py; the examples are the demo case ("Try demo data"). -->
+     Every number here comes from lens/catalog.py and lens/engine.py; the examples are the demo case ("Try demo data"). -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>How WELA decides — technical briefing</title>
+<title>How LENS decides — technical briefing</title>
 <style>
 @page { size: A4; margin: 15mm 14mm 16mm 14mm;
-  @bottom-left { content: "WELA · how it decides — technical briefing"; font: 7.5pt -apple-system, "Helvetica Neue", Arial, sans-serif; color: #8a91a3; }
+  @bottom-left { content: "LENS · how it decides — technical briefing"; font: 7.5pt -apple-system, "Helvetica Neue", Arial, sans-serif; color: #8a91a3; }
   @bottom-right { content: counter(page) " / " counter(pages); font: 7.5pt -apple-system, "Helvetica Neue", Arial, sans-serif; color: #8a91a3; } }
 @page :first { margin: 0; @bottom-left { content: none } @bottom-right { content: none } }
 :root { --ink:#161b29; --ink2:#3a4256; --muted:#6b7387; --line:#dfe3ec; --line2:#eef1f6; --bg2:#f6f7fb;
@@ -86,16 +86,16 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
 
 <!-- ============================================================ COVER -->
 <section class="cover">
-  <div class="logo"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#fff"/><path d="M6 20h5l3-9 4 13 3-8h5" fill="none" stroke="#1428a0" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>WELA</div>
-  <h0>How WELA<br>decides</h0>
+  <div class="logo"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#fff"/><circle cx="13.5" cy="13.5" r="7.5" fill="none" stroke="#1428a0" stroke-width="2.4"/><path d="M19 19l6 6" stroke="#1428a0" stroke-width="3" stroke-linecap="round"/><path d="M8.6 14h2.3l1.5-3.4 2.4 6.4 1.5-3h1.3" fill="none" stroke="#1428a0" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>LENS</div>
+  <h0>How LENS<br>decides</h0>
   <div class="sub">Technical briefing — the rules, the scores and the reasons</div>
-  <div class="desc">Every verdict and every percentage WELA shows, and exactly how it is worked out: how a power cycle is
+  <div class="desc">Every verdict and every percentage LENS shows, and exactly how it is worked out: how a power cycle is
     classified and scored, how Storport and disk events are judged, how a fault is tied to the Samsung drive, and how one
     app, update or service is singled out as the trigger — with the arithmetic for real examples and the questions to expect.</div>
   <div class="qs">
     <div><b>Question 1</b>How is each power cycle classified — and what does its % mean?</div>
     <div><b>Question 2</b>How are Storport and disk events judged?</div>
-    <div><b>Question 3</b>When does WELA say the drive caused it — and that it is Samsung's?</div>
+    <div><b>Question 3</b>When does LENS say the drive caused it — and that it is Samsung's?</div>
     <div><b>Question 4</b>How is an app, update or service singled out as the trigger?</div>
   </div>
   <div class="meta"><span>Version 0.1.0</span><span>Branch <b>main</b></span><span>26 November 2026</span><span>Prepared by Hitesh Kumar</span></div>
@@ -122,13 +122,13 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
 
 <!-- ============================================================ 1 SHORT -->
 <h1 id="short"><span class="n">1</span>The short version</h1>
-<div class="lead">WELA reads a PC's Windows event logs and answers four questions for every power cycle with fixed, written-down rules. Every answer shows its evidence, what was expected but not logged, and how strong it is.</div>
+<div class="lead">LENS reads a PC's Windows event logs and answers four questions for every power cycle with fixed, written-down rules. Every answer shows its evidence, what was expected but not logged, and how strong it is.</div>
 <h2>Design principles</h2>
 <ul>
-  <li><b>Rules, not a trained model.</b> The same logs always give the same answer. Every event ID, weight and time window lives in one catalogue file (<code>wela/catalog.py</code>) and is pinned by automated tests.</li>
+  <li><b>Rules, not a trained model.</b> The same logs always give the same answer. Every event ID, weight and time window lives in one catalogue file (<code>lens/catalog.py</code>) and is pinned by automated tests.</li>
   <li><b>Evidence-weighted.</b> Each event Windows writes when a PC stops carries a weight; the confidence is the sum of what was found, minus penalties for contradictions and log gaps.</li>
-  <li><b>Redundant signals.</b> Windows records one stop several times, in different logs and by different components. WELA reads all of them, so one lost event does not change the answer — it only lowers the score.</li>
-  <li><b>Honest about gaps.</b> When the logs cannot show something, WELA says <i>Undetermined</i> or <i>Can't tell</i> rather than guess. Missing records, cleared logs and clock changes are detected and lower confidence.</li>
+  <li><b>Redundant signals.</b> Windows records one stop several times, in different logs and by different components. LENS reads all of them, so one lost event does not change the answer — it only lowers the score.</li>
+  <li><b>Honest about gaps.</b> When the logs cannot show something, LENS says <i>Undetermined</i> or <i>Can't tell</i> rather than guess. Missing records, cleared logs and clock changes are detected and lower confidence.</li>
   <li><b>Explainable.</b> Every verdict lists the events behind it, each one clickable to its raw data.</li>
   <li><b>Local only.</b> Runs on the engineer's PC, serves the UI on 127.0.0.1 and makes no network calls; the logs never leave the machine.</li>
 </ul>
@@ -153,7 +153,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
 <div class="lead">Every event, from every log, becomes one record on one UTC timeline. Each record is then tagged with what it means.</div>
 <h2>Which logs, and what each contributes</h2>
 <table class="t">
-  <thead><tr><th style="width:30%">Log</th><th>What WELA takes from it</th></tr></thead><tbody>
+  <thead><tr><th style="width:30%">Log</th><th>What LENS takes from it</th></tr></thead><tbody>
   <tr><td class="k">System</td><td>Power-cycle events (12, 13, 41, 109, 1074, 6005, 6006, 6008 …), disk / NTFS / NVMe driver events, service failures, display-driver timeouts, Windows Update</td></tr>
   <tr><td class="k">Application</td><td>App crashes and hangs, Windows Error Reporting (including blue-screen reports), installer events</td></tr>
   <tr><td class="k">Storage-Storport / Operational (+ Health)</td><td>Per-request storage problems — timeouts, resets, retries — often with the drive's vendor, product ID and serial</td></tr>
@@ -173,11 +173,11 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
   <tr><td class="k">Storage meaning</td><td>stornvme 129 → "Reset to device", state <i>reset</i></td><td>The drive verdict (ch. 6–8)</td></tr>
   <tr><td class="k">Software meaning</td><td>Application Hang 1002 → "Application hung", group <i>app</i>, kind <i>hang</i>, subject <i>explorer.exe</i></td><td>The trigger verdict (ch. 9)</td></tr>
 </tbody></table>
-<p>Matching is by provider + event ID from the catalogue, so the rules work on meanings and there is one place to change them. A <code>wela_config.json</code> next to <code>run_wela.py</code> overrides any part of the catalogue without touching code.</p>
+<p>Matching is by provider + event ID from the catalogue, so the rules work on meanings and there is one place to change them. A <code>lens_config.json</code> next to <code>run_lens.py</code> overrides any part of the catalogue without touching code.</p>
 
 <!-- ============================================================ 3 WINDOWS -->
 <h1 id="windows"><span class="n">3</span>Boots, sessions and time windows</h1>
-<div class="lead">Every boot closes the session before it. WELA finds the boots, then asks of each one: how did the session before it end — and what was happening around that moment?</div>
+<div class="lead">Every boot closes the session before it. LENS finds the boots, then asks of each one: how did the session before it end — and what was happening around that moment?</div>
 <ul>
   <li><b>A boot</b> = Kernel-General 12, EventLog 6005 / 6009 and Kernel-Boot 27 within 180 s of each other. Any one of 12 or 6005 is enough (or 27 with BootType 0 / 1), so a boot is found even when a marker is missing. Kernel-Boot 27 BootType 1 = a Fast Startup boot; BootType 2 = a resume from hibernate, which is <i>not</i> a boot.</li>
   <li><b>A session</b> = everything between two boots. <b>The last sign of life</b> = the last event of any log before the next boot — the anchor for a hard shutdown, because a power loss writes nothing at the moment it happens.</li>
@@ -230,7 +230,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
 
 <!-- ============================================================ 4 CLASSIFY -->
 <h1 id="classify"><span class="n">4</span>How a power cycle is classified</h1>
-<div class="lead">The order of the checks is the design. Windows' own report of an unclean stop beats everything; then a clean stop; only when both are absent does WELA infer — and it says so.</div>
+<div class="lead">The order of the checks is the design. Windows' own report of an unclean stop beats everything; then a clean stop; only when both are absent does LENS infer — and it says so.</div>
 <svg class="dia" viewBox="0 0 680 360" role="img" aria-label="Decision order for classifying a power cycle">
   <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b7387"/></marker></defs>
   <g font-size="9.5" fill="#161b29">
@@ -354,7 +354,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
   <li><b>Any other event in a Storport log</b> → state from Windows' own severity: Critical or Error → <i>error</i>, Warning → <i>warning</i>, Information → <i>info</i> (listed, never counted).</li>
   <li><b>Any other event from a storage provider</b> (name contains stornvme, storahci, storport, nvme, iastor or disk) at Critical, Error or Warning level → state from its severity.</li>
 </ol>
-<div class="callout"><b>Why severity for Storport.</b> Microsoft does not publish a meaning for each Storport Operational event ID, so WELA does not invent one: it uses the severity Windows itself gave the event. Information-level events still appear in the drawer with their key fields (opcode, status, sense data, latency …) so the engineer can read them. Naming the Storport IDs that matter, from real claim logs, is on the roadmap.</div>
+<div class="callout"><b>Why severity for Storport.</b> Microsoft does not publish a meaning for each Storport Operational event ID, so LENS does not invent one: it uses the severity Windows itself gave the event. Information-level events still appear in the drawer with their key fields (opcode, status, sense data, latency …) so the engineer can read them. Naming the Storport IDs that matter, from real claim logs, is on the roadmap.</div>
 <h2>States, worst first</h2>
 <table class="t">
   <thead><tr><th style="width:11%">State</th><th>Events (catalogue)</th><th style="width:28%">Read as</th></tr></thead><tbody>
@@ -368,7 +368,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
 <h2>Two refinements</h2>
 <ul>
   <li><b>Platform vs. drive.</b> WHEA-Logger events report errors in the CPU, PCIe or memory platform — not necessarily in the drive. They stay in the window, but are left out of the <i>drive</i> state, so on their own they can make "Did the drive cause it?" at most <i>Possibly</i>, never <i>Likely</i>.</li>
-  <li><b>Readable commands.</b> NVMe I/O is translated to SCSI commands by stornvme, so Storport events carry SCSI opcodes. WELA decodes them (e.g. 0x2A WRITE(10), 0x35 SYNCHRONIZE CACHE(10), 0x28 READ(10)) so the engineer can see which command failed.</li>
+  <li><b>Readable commands.</b> NVMe I/O is translated to SCSI commands by stornvme, so Storport events carry SCSI opcodes. LENS decodes them (e.g. 0x2A WRITE(10), 0x35 SYNCHRONIZE CACHE(10), 0x28 READ(10)) so the engineer can see which command failed.</li>
 </ul>
 
 <!-- ============================================================ 7 DRIVE -->
@@ -401,7 +401,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
   <p><b>Effect on the drive</b> — the 60 s after boot: <i>Drive missing after boot</i> (157) · <i>Errors</i> (reset / error) · <i>Warnings</i> (slow / warning, or platform only) · <i>Healthy</i> · <i>No data</i>. A drive that is missing or erroring after the boot supports a drive cause.</p>
 </div>
 </div>
-<div class="callout warn"><b>"No drive evidence" is not "healthy".</b> Windows keeps its logs on the system drive. If that drive froze instantly, its last events were never saved — a failing drive can look quiet. WELA says this on every such verdict and asks for the drive's own SMART and error logs.</div>
+<div class="callout warn"><b>"No drive evidence" is not "healthy".</b> Windows keeps its logs on the system drive. If that drive froze instantly, its last events were never saved — a failing drive can look quiet. LENS says this on every such verdict and asks for the drive's own SMART and error logs.</div>
 <h2>Demo examples</h2>
 <table class="t compact">
   <thead><tr><th style="width:6%">ID</th><th style="width:22%">Power cycle</th><th>Evidence in the minute before</th><th style="width:16%">Verdict</th></tr></thead><tbody>
@@ -414,7 +414,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
 
 <!-- ============================================================ 8 WHICH -->
 <h1 id="which"><span class="n">8</span>Which drive — is it Samsung's?</h1>
-<div class="lead">Every storage event is tied to a physical drive where the logs allow it, and WELA says how sure it is: <i>named</i> and <i>disk number</i> are certain; <i>only drive</i> is marked "probably".</div>
+<div class="lead">Every storage event is tied to a physical drive where the logs allow it, and LENS says how sure it is: <i>named</i> and <i>disk number</i> are certain; <i>only drive</i> is marked "probably".</div>
 <table class="t">
   <thead><tr><th style="width:15%">Method</th><th>How</th><th style="width:24%">Shown as</th></tr></thead><tbody>
   <tr><td class="k">Named</td><td>The event carries the drive's identity: Storport VendorId / ProductId / SerialNumber, a Partition model, or a PCI vendor ID (<code>VEN_xxxx</code>) in a device path</td><td><span class="chip c-sam">Samsung drive</span> — sure</td></tr>
@@ -517,7 +517,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
 
 <!-- ============================================================ 10 QUALITY -->
 <h1 id="quality"><span class="n">10</span>Data quality — when the logs themselves are suspect</h1>
-<div class="lead">Before trusting any verdict, WELA checks the logs. Where they are incomplete it lowers confidence or refuses to guess.</div>
+<div class="lead">Before trusting any verdict, LENS checks the logs. Where they are incomplete it lowers confidence or refuses to guess.</div>
 <table class="t">
   <thead><tr><th style="width:21%">Check</th><th>How</th><th style="width:36%">Effect</th></tr></thead><tbody>
   <tr><td class="k">Missing logs</td><td>System, Application and Storport are expected</td><td>Warning; verdicts say what was not checked (e.g. "only System-log disk events checked")</td></tr>
@@ -537,7 +537,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
   <tr><td class="k">Stack</td><td>Python 3.9+ standard library only (3,376 lines); <code>.evtx</code> read with Windows' own wevtutil — nothing to install. The UI is a local web page in plain JavaScript and CSS (1,487 lines), no frameworks, no CDN, works offline.</td></tr>
   <tr><td class="k">Privacy</td><td>The local server binds to 127.0.0.1 only; no network calls; cases are saved under <code>./cases</code> on the engineer's PC. Customer logs never leave the machine.</td></tr>
   <tr><td class="k">Determinism</td><td>Same logs + same catalogue → same verdicts. No randomness, no model, no internet lookups.</td></tr>
-  <tr><td class="k">Configurable</td><td>Every event ID, weight, window and vendor rule is in <code>wela/catalog.py</code>; <code>wela_config.json</code> overrides any of it. The drive window, trigger window, restart gap, review line and quiet-gap length are also in the UI's <i>Analysis settings</i>.</td></tr>
+  <tr><td class="k">Configurable</td><td>Every event ID, weight, window and vendor rule is in <code>lens/catalog.py</code>; <code>lens_config.json</code> overrides any of it. The drive window, trigger window, restart gap, review line and quiet-gap length are also in the UI's <i>Analysis settings</i>.</td></tr>
   <tr><td class="k">Outputs</td><td>HTML report, Excel workbook (written directly as Office Open XML — no library), CSV, JSON; a command line for batch runs; the full result is saved as one JSON per case.</td></tr>
   <tr><td class="k">Tests (56)</td><td>Demo scenario with known answers (16 power cycles, 5 sleeps) · 11; power-cycle rules · 13; which drive · 10; software trigger · 17; folder selection · 2; timeline line (event index and rows) · 2; robustness — 30 rounds of up to 400 random, malformed events through the engine and every export · 1.</td></tr>
   <tr><td class="k">Speed (analysis step, laptop)</td><td>19,640 events / 640 power cycles in 0.21 s · 98,200 / 3,200 in 1.55 s · 196,400 / 6,400 in 4.41 s. Reading <code>.evtx</code> with wevtutil adds time in proportion to file size. The timeline line on 196,400 events: 0.12 ms per move, one frame per move while dragging — the browser keeps every event's time and log. Every tab of that case (8,400 power cycles) opens in about 35 ms: long tables add rows as you scroll.</td></tr>
@@ -550,7 +550,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
   <tr><td class="k">Validated on synthetic logs so far</td><td>Every rule is tested against a demo case with known answers. Next: 20–30 closed claims with known outcomes, and lab PCs where each kind of power cycle is caused on purpose (pull the plug, hold the button, force a crash, sleep and wake).</td></tr>
   <tr><td class="k">Weights are set by hand</td><td>Set from how directly Windows records each event; the closed-claim set will calibrate them. They can be retuned without code.</td></tr>
   <tr><td class="k">The logs live on the suspect drive</td><td>A drive that froze may never have saved its last events, so "No drive evidence" is not "healthy". Cross-check with the drive's SMART and error logs.</td></tr>
-  <tr><td class="k">Storport is judged by severity</td><td>Its event IDs have no published meanings; WELA uses the severity Windows gave them and shows every field. Naming the important IDs from real logs is next.</td></tr>
+  <tr><td class="k">Storport is judged by severity</td><td>Its event IDs have no published meanings; LENS uses the severity Windows gave them and shows every field. Naming the important IDs from real logs is next.</td></tr>
   <tr><td class="k">"Probably" drive attributions</td><td>Unnamed events are only attributed when one drive exists, and are labelled. Adding the Partition log turns more of them into certain matches.</td></tr>
   <tr><td class="k">Who asked is not always logged</td><td>No 1074 → "Not logged"; restart vs. shutdown then comes from the 5-min gap, flagged as inferred.</td></tr>
   <tr><td class="k">Scope</td><td>Rules report evidence and patterns; they do not replace failure analysis of the drive. One PC per case; Windows event logs only — no minidumps or SMART import yet.</td></tr>
@@ -569,22 +569,22 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
   <div class="qa"><span class="qq">What does "App crashed · Possibly 25%" mean?</span>An app crashed in that window and nothing stronger was found. 25% is the crash weight: an ordinary app crash cannot take Windows down, it shows what was failing. If the drive was failing too, 0.15 comes off — 10%.</div>
   <div class="qa"><span class="qq">How do you know who shut the PC down?</span>User32 1074 records the process, the user, a reason code and a comment. The process maps to a category (Windows Update, vendor tool, IT management, user …) and the reason code is decoded from its bits, which are the same in every Windows language.</div>
   <div class="qa"><span class="qq">And if there is no 1074?</span>Then "Not logged" — unless an installer, update or service says it restarted the PC (Likely) or an update was waiting for a restart (Possibly). Restart vs. shutdown then comes from the gap, flagged.</div>
-  <div class="qa"><span class="qq">What is Storport, and how is it judged?</span>Windows' storage port driver; its log records problems with individual I/O requests and usually names the drive. Its event IDs have no published meanings, so WELA uses Windows' own severity and lists information-level events with their fields without counting them.</div>
+  <div class="qa"><span class="qq">What is Storport, and how is it judged?</span>Windows' storage port driver; its log records problems with individual I/O requests and usually names the drive. Its event IDs have no published meanings, so LENS uses Windows' own severity and lists information-level events with their fields without counting them.</div>
   <div class="qa"><span class="qq">How is the Samsung drive identified?</span>By name, PCI vendor ID 144D or an MZ… part number in the event; by disk number through that boot's Partition inventory; or — marked "probably" — because it was the only drive.</div>
   <div class="qa"><span class="qq">What if the clock or time zone is wrong?</span>Everything is compared in UTC; the display zone is a choice. Clock changes of 5 min or more are flagged with the process that made them, and time going backwards is flagged.</div>
   <div class="qa"><span class="qq">What if logs were cleared or records are missing?</span>Both are detected (104 / 1102, record-ID gaps). Power cycles at a gap become Undetermined or lose 30% with a warning, and go to review.</div>
   <div class="qa"><span class="qq">Is customer data safe?</span>It runs entirely on the engineer's PC, serves the UI on 127.0.0.1, makes no network calls and needs no installs. Exports leave people's account names out unless you choose to include them.</div>
   <div class="qa"><span class="qq">Does it scale?</span>196,400 events and 6,400 power cycles analyse in about 4.4 s on a laptop, and the timeline line moves through them in 0.12 ms per step.</div>
-  <div class="qa"><span class="qq">Why rules and not machine learning?</span>Claim decisions need answers that are explainable and repeatable, and there is no labelled set of claims to train on yet. Rules can be audited line by line. AI fits on top — writing claim summaries from WELA's results — not in place of the rules.</div>
-  <div class="qa"><span class="qq">Can the rules change without a developer?</span>Yes: event IDs, weights, windows and vendor rules are data in the catalogue, overridable with <code>wela_config.json</code>; the main windows are also in the UI's settings.</div>
-  <div class="qa"><span class="qq">Why "Possibly" so often?</span>Because the logs rarely prove a software cause; WELA only says "Likely" or "Confirmed" when Windows recorded the request or the component said it restarted the PC.</div>
-  <div class="qa"><span class="qq">Can it name the person, or say if they are an admin?</span>The account the request ran under, when Windows logged it (1074): a user account, or Windows itself. Not whether that account is an administrator — only the Security log says that, and WELA does not read it. A short power-button press or a dead battery names no account at all.</div>
+  <div class="qa"><span class="qq">Why rules and not machine learning?</span>Claim decisions need answers that are explainable and repeatable, and there is no labelled set of claims to train on yet. Rules can be audited line by line. AI fits on top — writing claim summaries from LENS's results — not in place of the rules.</div>
+  <div class="qa"><span class="qq">Can the rules change without a developer?</span>Yes: event IDs, weights, windows and vendor rules are data in the catalogue, overridable with <code>lens_config.json</code>; the main windows are also in the UI's settings.</div>
+  <div class="qa"><span class="qq">Why "Possibly" so often?</span>Because the logs rarely prove a software cause; LENS only says "Likely" or "Confirmed" when Windows recorded the request or the component said it restarted the PC.</div>
+  <div class="qa"><span class="qq">Can it name the person, or say if they are an admin?</span>The account the request ran under, when Windows logged it (1074): a user account, or Windows itself. Not whether that account is an administrator — only the Security log says that, and LENS does not read it. A short power-button press or a dead battery names no account at all.</div>
   <div class="qa"><span class="qq">What does it not do?</span>No minidump analysis, no SMART import, one PC per case. Those are on the roadmap.</div>
 </div>
 
 <!-- ============================================================ A NUMBERS -->
 <h1 id="numbers" class="pg"><span class="n">A</span>Every number in one place</h1>
-<div class="lead">The defaults in <code>wela/catalog.py</code>. Any of them can be overridden in <code>wela_config.json</code>.</div>
+<div class="lead">The defaults in <code>lens/catalog.py</code>. Any of them can be overridden in <code>lens_config.json</code>.</div>
 <div class="grid2">
 <table class="t compact">
   <thead><tr><th>Setting</th><th style="width:18%">Default</th></tr></thead><tbody>

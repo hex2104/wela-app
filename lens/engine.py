@@ -1,4 +1,4 @@
-"""WELA analysis engine.
+"""LENS analysis engine.
 
 Pipeline
   1. tag      - mark every event with its power signal / storage meaning
@@ -1446,7 +1446,7 @@ class Analyzer:
         triggers = Counter(t["software"]["trigger"] for t in self.transitions)
         bad_storage = [e for e in self.storage if e.storage["state"] != "info"]
         return {
-            "wela_version": __version__,
+            "lens_version": __version__,
             "generated": iso(datetime.now(timezone.utc)),
             "computer": computers.most_common(1)[0][0] if computers else "",
             "event_count": len(self.events),

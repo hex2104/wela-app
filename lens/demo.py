@@ -1,6 +1,6 @@
 """Synthetic demo logs (wevtutil-style XML) covering the tricky cases.
 
-Every scenario below is something WELA has to get right; the expected verdict
+Every scenario below is something LENS has to get right; the expected verdict
 is listed so tests can check it. Times are UTC. All data is fictitious.
 """
 from __future__ import annotations

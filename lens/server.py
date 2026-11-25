@@ -1,4 +1,4 @@
-"""Local web server for the WELA UI (standard library only).
+"""Local web server for the LENS UI (standard library only).
 
 Binds to 127.0.0.1 only - nothing is reachable from the network and no data
 leaves the machine.
@@ -76,7 +76,7 @@ def _pick(kind: str):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = f"WELA/{__version__}"
+    server_version = f"LENS/{__version__}"
 
     def log_message(self, fmt, *args):  # quieter console
         if "/api/" in (args[0] if args else ""):
@@ -215,7 +215,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._err("case not found", 404)
         if not names:   # a report leaves the PC: people's account names stay behind unless asked for
             r = report.redact(r)
-        name = f"WELA_{cid}"
+        name = f"LENS_{cid}"
         if fmt == "html":
             body, ct = report.to_html(r, tz), "text/html; charset=utf-8"
         elif fmt == "xlsx":
@@ -242,7 +242,7 @@ def serve(port: int = 8765, open_browser: bool = True):
     if httpd is None:
         raise SystemExit("No free port found")
     url = f"http://127.0.0.1:{port}/"
-    print(f"\n  WELA {__version__} running at {url}\n  (local only - press Ctrl+C to stop)\n")
+    print(f"\n  LENS {__version__} running at {url}\n  (local only - press Ctrl+C to stop)\n")
     if open_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:

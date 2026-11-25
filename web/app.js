@@ -1,4 +1,4 @@
-/* WELA front-end - vanilla JS, no external libraries (works offline). */
+/* LENS front-end - vanilla JS, no external libraries (works offline). */
 "use strict";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -36,8 +36,9 @@ const S = { cases: [], c: null, tab: "overview", filter: "all", v: {}, tl: null,
 
 /* ------------------------------------------------------------------ utils */
 const store = {
-  get(k, d) { try { const v = localStorage.getItem("wela." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem("wela." + k, JSON.stringify(v)); } catch { /* ignore */ } },
+  /* "wela.": the keys from before the rename to LENS, so a viewer keeps their theme, time zone and choices */
+  get(k, d) { try { const v = localStorage.getItem("lens." + k) ?? localStorage.getItem("wela." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("lens." + k, JSON.stringify(v)); } catch { /* ignore */ } },
 };
 const debounce = (fn, ms = 150) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 /* search: event IDs ("41" or "41, 6008") match exactly, anything else is a text search. null = no search */
@@ -207,7 +208,7 @@ function renderHome() {
   <div class="home">
     <div class="card hero">
       <h1>Analyze Windows event logs</h1>
-      <p>Point WELA at a claim's log folder or <b>.evtx</b> files. From a folder it reads only <b>System</b>, <b>Application</b>
+      <p>Point LENS at a claim's log folder or <b>.evtx</b> files. From a folder it reads only <b>System</b>, <b>Application</b>
          and <b>Storport</b> (Operational, Health). It rebuilds every power cycle, checks what the drive was doing around each one,
          and flags anything uncertain.</p>
       <div class="dropzone">
@@ -230,7 +231,7 @@ function renderHome() {
           <label>Flag for review below confidence<input type="number" id="s_review" value="${st.review_threshold ?? 0.6}" step="0.05" min="0" max="1"></label>
           <label>Flag quiet gaps longer than (seconds)<input type="number" id="s_gap" value="${st.unexplained_gap_s ?? 7200}" min="600"></label>
         </div>
-        <div class="note" style="margin-top:12px">Event rules and weights live in <span class="mono">wela/catalog.py</span>; override any of them with a <span class="mono">wela_config.json</span> next to <span class="mono">run_wela.py</span>.</div>
+        <div class="note" style="margin-top:12px">Event rules and weights live in <span class="mono">lens/catalog.py</span>; override any of them with a <span class="mono">lens_config.json</span> next to <span class="mono">run_lens.py</span>.</div>
       </details>
     </div>
     <div class="steps">

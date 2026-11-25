@@ -4,7 +4,7 @@ Supported inputs
   * .evtx  - on Windows via the built-in `wevtutil` (no install needed),
              falling back to PowerShell Get-WinEvent; on other OSes via the
              optional `python-evtx` package.
-  * .xml   - events exported as XML (wevtutil qe ... /f:xml, or WELA demo logs).
+  * .xml   - events exported as XML (wevtutil qe ... /f:xml, or LENS demo logs).
 A path may be a file or a folder (searched recursively). From a folder only the
 FOLDER_LOGS are read; a file given by itself is always read.
 """

@@ -1,4 +1,4 @@
-"""WELA - Windows Event Log Analyzer.
+"""LENS - Log Event Navigation System.
 
 Power-cycle analysis of Windows event logs (.evtx) for SSD claim debugging.
 Pure Python standard library; on Windows, .evtx files are read with the

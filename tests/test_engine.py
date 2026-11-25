@@ -9,8 +9,8 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from wela import catalog, demo, engine, parser, report, store  # noqa: E402
-from wela.models import Event, parse_time  # noqa: E402
+from lens import catalog, demo, engine, parser, report, store  # noqa: E402
+from lens.models import Event, parse_time  # noqa: E402
 
 
 def ev(t, prov, eid, chan="System", rid=None, level=4, **data):
@@ -165,7 +165,7 @@ class DemoScenario(unittest.TestCase):
 
     def test_exports(self):
         html = report.to_html(self.r, 330)
-        self.assertIn(b"WELA power-cycle report", html)
+        self.assertIn(b"LENS power-cycle report", html)
         self.assertIn(b"Drive around each power cycle", html)
         self.assertIn(b"Software around each power cycle", html)
         self.assertIn(b"class='sam'", html)

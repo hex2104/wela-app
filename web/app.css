@@ -25,7 +25,9 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 /* ---------- top bar ---------- */
 .topbar{height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
 .brand{display:flex;gap:11px;align-items:center;cursor:pointer;user-select:none}
-.logo{width:32px;height:32px}.logo rect{fill:var(--accent);stroke:none}.logo path{stroke:#fff;stroke-width:2.6}
+/* the mark: a lens over a log-event pulse */
+.logo{width:32px;height:32px}.logo rect{fill:var(--accent);stroke:none}
+.logo circle,.logo path{stroke:#fff;fill:none}.logo circle{stroke-width:2.4}.logo .h{stroke-width:3}.logo .p{stroke-width:1.7}
 .brand-name{font-weight:700;letter-spacing:.06em;font-size:15px;line-height:1.1}
 .brand-sub{font-size:11.5px;color:var(--muted);line-height:1.2}
 .top-actions{display:flex;gap:12px;align-items:center}
