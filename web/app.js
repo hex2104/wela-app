@@ -155,6 +155,32 @@ function onRows(el, open) {
     const r = ev.target.closest("tr.click"); if (r) open(r);
   };
 }
+/* long tables: the first rows at once, the next ones as the end of the table scrolls into view */
+const PAGE = 150;
+function pageRows(table, head, rows, rowHtml, empty) {
+  table._io?.disconnect();
+  if (!rows.length) { table.innerHTML = `<tr><td class="empty">${empty}</td></tr>`; return; }
+  table.innerHTML = `${head}<tbody></tbody><tfoot><tr><td class="tmore" colspan="20"></td></tr></tfoot>`;
+  const body = table.tBodies[0], foot = table.tFoot, note = foot.querySelector("td");
+  let n = 0;
+  const more = () => {
+    const end = Math.min(rows.length, n + PAGE);
+    body.insertAdjacentHTML("beforeend", rows.slice(n, end).map(rowHtml).join(""));
+    n = end;
+    if (n < rows.length) note.textContent = `Showing ${n.toLocaleString()} of ${rows.length.toLocaleString()} · scroll for more`;
+    else { table._io?.disconnect(); foot.remove(); }
+  };
+  note.onclick = more;
+  more();
+  if (n >= rows.length) return;
+  const io = new IntersectionObserver((es) => {   // observing again re-checks: still in view loads the next page
+    if (!es[0].isIntersecting) return;
+    more();
+    if (n < rows.length) { io.unobserve(foot); io.observe(foot); }
+  }, { root: table.closest(".tbl-wrap"), rootMargin: "400px" });
+  io.observe(foot);
+  table._io = io;
+}
 
 /* ------------------------------------------------------------------ sidebar */
 async function loadCases() {
@@ -383,6 +409,15 @@ function shortChan(ch) {
 
 /* ------------------------------------------------------------------ power cycles */
 const winEvents = (x) => [...(x?.before?.events || []), ...(x?.after?.events || [])];
+/* what a search looks through, worked out once per power cycle */
+function cycleQ(it) {
+  if (!it._q) {
+    const s = it.software || {};
+    it._q = { eids: [...it.evidence_found, ...winEvents(it.drive), ...winEvents(s)].map((e) => e.eid),
+      text: `${it.id} ${it.type} ${it.subtype} ${it.drive?.state} ${it.drive?.cause_label ?? ""} ${it.drive?.effect_label ?? ""} ${it.drive?.highlight_label ?? ""} ${s.label ?? ""} ${s.initiator?.process ?? ""} ${(s.reasons || []).join(" ")} ${it.flags.map((f) => f.text).join(" ")}` };
+  }
+  return it._q;
+}
 function filtered() {
   const m = matcher(S.v.cyQ);
   const sw = S.filter.startsWith("sw:") ? S.filter.slice(3) : null;
@@ -395,47 +430,56 @@ function filtered() {
     if (sw !== null && (it.type === "sleep" || it.software?.trigger !== sw)) return false;
     if (sw === null && !["all", "review", "drive", "effect", "samsung", "software"].includes(S.filter) && it.type !== S.filter) return false;
     if (!m) return true;
-    const s = it.software || {};
-    return m([...it.evidence_found, ...winEvents(it.drive), ...winEvents(s)].map((e) => e.eid),
-      `${it.id} ${it.type} ${it.subtype} ${it.drive?.state} ${it.drive?.cause_label ?? ""} ${it.drive?.effect_label ?? ""} ${it.drive?.highlight_label ?? ""} ${s.label ?? ""} ${s.initiator?.process ?? ""} ${(s.reasons || []).join(" ")} ${it.flags.map((f) => f.text).join(" ")}`);
+    const q = cycleQ(it);
+    return m(q.eids, q.text);
   });
 }
 function tabCycles() {
   const n = S.c.counts;
-  const f = [["all", "All", S.c.items.length], ["shutdown", "Shutdown", n.shutdown], ["restart", "Restart", n.restart],
-    ["hard", "Hard", n.hard], ["sleep", "Sleep", n.sleep + n.hibernate + n.modern_standby], ["unknown", "Undetermined", n.unknown],
-    ["review", "Needs review", n.needs_review], ["drive", "Drive suspected", (n.drive_likely ?? 0) + (n.drive_possible ?? 0)],
-    ["effect", "Drive errors after", n.drive_effect ?? 0]];
-  if (n.hl_cycles !== undefined) f.push(["samsung", `${HV()} drive`, n.hl_cycles], ["software", "Triggered by software", n.software]);
-  if (S.filter.startsWith("sw:")) f.push([S.filter, `Trigger: ${swLabel(S.filter.slice(3))}`, (S.c.software_breakdown || {})[S.filter.slice(3)] || 0]);
+  const main = [["all", "All", S.c.items.length], ["shutdown", "Shutdown", n.shutdown], ["restart", "Restart", n.restart],
+    ["hard", "Hard", n.hard], ["sleep", "Sleep", n.sleep + n.hibernate + n.modern_standby]];
+  if (n.hl_cycles !== undefined) main.push(["samsung", `${HV()} drive`, n.hl_cycles]);
+  /* the rest sit under More, so the row stays short; the button names the one in use */
+  const more = [["unknown", "Undetermined", n.unknown], ["review", "Needs review", n.needs_review],
+    ["drive", "Drive suspected", (n.drive_likely ?? 0) + (n.drive_possible ?? 0)], ["effect", "Drive errors after", n.drive_effect ?? 0]];
+  if (n.software !== undefined) more.push(["software", "Triggered by software", n.software]);
+  if (S.filter.startsWith("sw:")) more.push([S.filter, `Trigger: ${swLabel(S.filter.slice(3))}`, (S.c.software_breakdown || {})[S.filter.slice(3)] || 0]);
+  const on = more.find(([k]) => k === S.filter);
   $("#tabBody").innerHTML = `
     <div class="row" style="margin-bottom:12px">
-      ${f.map(([k, l, c]) => `<button class="fchip ${S.filter === k ? "on" : ""}" data-f="${k}">${l}<span class="badge">${c}</span></button>`).join("")}
-      <div class="spacer"></div>${searchBox("cyQ")}
+      ${main.map(([k, l, c]) => `<button class="fchip ${S.filter === k ? "on" : ""}" data-f="${k}">${l}<span class="badge">${c}</span></button>`).join("")}
+      <div class="menu" id="cyMore"><button class="fchip ${on ? "on" : ""}">${on ? `${esc(on[1])}<span class="badge">${on[2]}</span>` : "More"} ▾</button>
+        <div class="menu-pop">${more.map(([k, l, c]) => `<a data-f="${k}" class="${S.filter === k ? "on" : ""}">${esc(l)}<small>${c}</small></a>`).join("")}</div></div>
+      <div class="spacer"></div><span class="muted small" id="cyN"></span>${searchBox("cyQ")}
     </div>
     <div class="card"><div class="tbl-wrap" style="max-height:calc(100vh - 290px)"><table class="t" id="cyc"></table></div></div>`;
-  $$(".fchip").forEach((b) => (b.onclick = () => { S.filter = b.dataset.f; tabCycles(); }));
+  $$(".fchip[data-f], #cyMore a").forEach((b) => (b.onclick = () => { S.filter = b.dataset.f; tabCycles(); }));
+  const menu = $("#cyMore");
+  menu.querySelector(".fchip").onclick = (e) => {
+    e.stopPropagation();
+    if (menu.classList.toggle("open")) document.addEventListener("click", () => menu.classList.remove("open"), { once: true });
+  };
+  $("#cyc").onclick = (ev) => { const r = ev.target.closest("tr.click"); if (r) openDetail(r.dataset.id); };
   bind(["cyQ"], drawCycleRows);
   drawCycleRows();
 }
+function cycleRow(it) {
+  const warn = it.flags.filter((x) => x.severity === "warn").length;
+  const hl = isHl(it.drive?.highlight) ? hlChip({ ...it.drive, highlight_label: it.drive.highlight === "yes" ? HV() : `${HV()}?` }) : "";
+  return `<tr class="click ${S.selected === it.id ? "sel" : ""} ${hl ? "samrow" : ""}" data-id="${it.id}">
+    <td class="mono">${it.id}</td><td style="white-space:nowrap">${fmt(it.time)}</td><td>${chip(it.type)}</td>
+    <td>${esc(it.subtype)}${it.wake_source ? `<div class="muted small">wake: ${esc(it.wake_source)}</div>` : ""}</td>
+    <td style="white-space:nowrap">${esc(it.type === "sleep" ? it.duration : it.gap)}</td>
+    <td>${confBar(it.confidence)}</td><td><span class="chips">${stateChip(it.drive?.state)}${hl}</span></td>
+    <td>${it.type === "sleep" ? '<span class="muted">—</span>' : causeChip(it.drive)}</td>
+    <td>${it.type === "sleep" || !it.software ? '<span class="muted">—</span>' : `${swChip(it.software)}${SW_CLS[it.software.strength] ? `<div class="muted small">${esc(it.software.strength_label + swConf(it.software))}</div>` : ""}`}</td>
+    <td>${warn ? `<span class="flagdot">${ICON.warn}${warn}</span>` : it.flags.length ? `<span class="muted small">${it.flags.length} note${it.flags.length > 1 ? "s" : ""}</span>` : ""}</td></tr>`;
+}
 function drawCycleRows() {
   const rows = filtered();
-  const el = $("#cyc");
-  if (!rows.length) { el.innerHTML = '<tr><td class="empty">Nothing matches this filter.</td></tr>'; return; }
-  el.innerHTML = `<thead><tr><th>ID</th><th>Time (${tzLabel()})</th><th>Type</th><th>Detail</th><th>Off / asleep</th><th>Confidence</th><th>Drive</th><th>Drive caused it?</th><th>Software trigger</th><th>Flags</th></tr></thead><tbody>
-    ${rows.map((it) => {
-      const warn = it.flags.filter((x) => x.severity === "warn").length;
-      const hl = isHl(it.drive?.highlight) ? hlChip({ ...it.drive, highlight_label: it.drive.highlight === "yes" ? HV() : `${HV()}?` }) : "";
-      return `<tr class="click ${S.selected === it.id ? "sel" : ""} ${hl ? "samrow" : ""}" data-id="${it.id}">
-        <td class="mono">${it.id}</td><td style="white-space:nowrap">${fmt(it.time)}</td><td>${chip(it.type)}</td>
-        <td>${esc(it.subtype)}${it.wake_source ? `<div class="muted small">wake: ${esc(it.wake_source)}</div>` : ""}</td>
-        <td style="white-space:nowrap">${esc(it.type === "sleep" ? it.duration : it.gap)}</td>
-        <td>${confBar(it.confidence)}</td><td><span class="chips">${stateChip(it.drive?.state)}${hl}</span></td>
-        <td>${it.type === "sleep" ? '<span class="muted">—</span>' : causeChip(it.drive)}</td>
-        <td>${it.type === "sleep" || !it.software ? '<span class="muted">—</span>' : `${swChip(it.software)}${SW_CLS[it.software.strength] ? `<div class="muted small">${esc(it.software.strength_label + swConf(it.software))}</div>` : ""}`}</td>
-        <td>${warn ? `<span class="flagdot">${ICON.warn}${warn}</span>` : it.flags.length ? `<span class="muted small">${it.flags.length} note${it.flags.length > 1 ? "s" : ""}</span>` : ""}</td></tr>`;
-    }).join("")}</tbody>`;
-  $$("tr.click", el).forEach((r) => (r.onclick = () => openDetail(r.dataset.id)));
+  $("#cyN").textContent = matcher(S.v.cyQ) ? `${rows.length.toLocaleString()} found` : "";
+  pageRows($("#cyc"), `<thead><tr><th>ID</th><th>Time (${tzLabel()})</th><th>Type</th><th>Detail</th><th>Off / asleep</th><th>Confidence</th><th>Drive</th><th>Drive caused it?</th><th>Software trigger</th><th>Flags</th></tr></thead>`,
+    rows, cycleRow, "Nothing matches this filter.");
 }
 
 /* ------------------------------------------------------------------ detail drawer */
@@ -627,19 +671,38 @@ function tabTimeline() {
     e.preventDefault(); const r = svg.getBoundingClientRect();
     const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.shiftKey ? e.deltaY : 0;   // sideways = pan
     if (!d) return zoomAt((e.clientX - r.left) / r.width, e.deltaY > 0 ? 1.25 : 0.8);
-    const dt = (d / (r.width - TL_LW - TL_R)) * (S.tl.t1 - S.tl.t0); S.tl.t0 += dt; S.tl.t1 += dt; drawTimeline();
+    const dt = (d / (r.width - TL_LW - TL_R)) * (S.tl.t1 - S.tl.t0); S.tl.t0 += dt; S.tl.t1 += dt; queueDraw();
   }, { passive: false });
-  let drag = null;   // a press that does not move is a click: it puts the line there
-  svg.addEventListener("mousedown", (e) => { drag = { x: e.clientX, t0: S.tl.t0, t1: S.tl.t1, moved: false }; svg.classList.add("drag"); });
+  /* one set of listeners for every mark: tooltips, clicks, and a drag to pan (a press that does not move puts the line there) */
+  const tt = $("#tooltip");
+  let drag = null;
+  svg.addEventListener("mousedown", (e) => {
+    if (e.target.closest(".mk, .ctxe")) return;
+    drag = { x: e.clientX, t0: S.tl.t0, t1: S.tl.t1, moved: false }; svg.classList.add("drag");
+  });
   window.onmouseup = (e) => {
     if (drag && !drag.moved && $("#tlsvg")) setCursor(tlT(e.clientX), { snap: true });
     drag = null; $("#tlsvg")?.classList.remove("drag");
   };
   svg.addEventListener("mousemove", (e) => {
-    if (!drag || (!drag.moved && Math.abs(e.clientX - drag.x) < 4)) return;
-    drag.moved = true;
-    const r = svg.getBoundingClientRect(), dt = ((drag.x - e.clientX) / (r.width - TL_LW)) * (drag.t1 - drag.t0);
-    S.tl.t0 = drag.t0 + dt; S.tl.t1 = drag.t1 + dt; drawTimeline();
+    if (drag && (drag.moved || Math.abs(e.clientX - drag.x) >= 4)) {
+      drag.moved = true; tt.style.opacity = 0;
+      const r = svg.getBoundingClientRect(), dt = ((drag.x - e.clientX) / (r.width - TL_LW)) * (drag.t1 - drag.t0);
+      S.tl.t0 = drag.t0 + dt; S.tl.t1 = drag.t1 + dt; queueDraw();
+      return;
+    }
+    const n = e.target.closest(".hit");
+    if (!n) { tt.style.opacity = 0; return; }
+    tt.innerHTML = n.dataset.tip; tt.style.opacity = 1;
+    tt.style.left = Math.min(innerWidth - 310, e.clientX + 14) + "px"; tt.style.top = e.clientY + 14 + "px";
+  });
+  svg.addEventListener("mouseleave", () => (tt.style.opacity = 0));
+  svg.addEventListener("click", (e) => {
+    const n = e.target.closest(".mk, .ctxe"); if (!n) return;
+    tt.style.opacity = 0;
+    if (n.classList.contains("ctxe")) return setCursor(+n.dataset.t);
+    const it = c.items.find((x) => x.id === n.dataset.id); if (it?.time_ts) setCursor(it.time_ts);
+    openDetail(n.dataset.id);
   });
   const cur = $("#tlcur");
   cur.addEventListener("pointerdown", (e) => {   // the drag listens on the window, so a fast move does not lose the line
@@ -667,7 +730,7 @@ function zoomAt(frac, k) {
   const W = $("#tlsvg").getBoundingClientRect().width;
   const f = Math.min(1, Math.max(0, (frac * W - TL_LW) / (W - TL_LW - TL_R)));
   const span = S.tl.t1 - S.tl.t0, ns = Math.max(120, span * k), at = S.tl.t0 + f * span;
-  S.tl.t0 = at - f * ns; S.tl.t1 = at + (1 - f) * ns; drawTimeline();
+  S.tl.t0 = at - f * ns; S.tl.t1 = at + (1 - f) * ns; queueDraw();
 }
 function drawTimeline() {
   const svg = $("#tlsvg"), c = S.c; if (!svg) return;
@@ -698,42 +761,67 @@ function drawTimeline() {
     l.k === "hl" ? `<rect x="${LW}" y="${l.y}" width="${W - LW - R}" height="${l.h}" rx="5" fill="var(--sam-soft)" stroke="var(--sam)" stroke-width="1"/>`
       : `<rect x="${LW}" y="${l.y}" width="${W - LW - R}" height="${l.h}" rx="5" fill="var(--panel-2)"/>`));
   const clipX = (a, b) => [Math.max(LW, x(a)), Math.min(W - R, x(b))];
-  // sessions
-  const L0 = L.power;
-  c.sessions.forEach((s) => {
-    if (!vis(s.start_ts, s.end_ts)) return; const [a, b] = clipX(s.start_ts, s.end_ts);
-    out.push(`<rect class="hit" data-tip="${esc(`<b>Boot session ${s.id}</b>${fmtTs(s.start_ts)} → ${fmtTs(s.end_ts)}<br>${s.boot_type || (s.partial_start ? "started before log" : "")}`)}" x="${a}" y="${L0.y + 6}" width="${Math.max(2, b - a)}" height="${L0.h - 12}" rx="4" fill="var(--accent)" opacity=".28"/>`);
-  });
-  // transitions
-  const L1 = L.trans, L2 = L.sleep;
-  c.items.forEach((it) => {
-    const col = TYPES[it.type].color, tip = esc(`<b>${it.id} · ${TYPES[it.type].label}</b>${esc(it.subtype)}<br>${fmtTs(it.time_ts)} · ${Math.round(it.confidence * 100)}%${it.needs_review ? " · needs review" : ""}${isSuspect(it) ? `<br>Drive caused it? ${esc(it.drive.cause_label)}` : ""}${hlCycle(it) ? ` · ${esc(it.drive.highlight_label)}` : ""}${it.software && it.type !== "sleep" && SW_CLS[it.software.strength] ? `<br>Trigger: ${esc(it.software.label)} (${esc(it.software.strength_label)})` : ""}`);
-    if (it.type === "sleep") {
-      const a = it.start_ts || it.end_ts, b = it.end_ts || it.start_ts; if (!vis(a, b)) return;
-      const [xa, xb] = clipX(a, b);
-      out.push(`<rect class="hit mk" data-id="${it.id}" data-tip="${tip}" x="${xa}" y="${L2.y + 5}" width="${Math.max(5, xb - xa)}" height="${L2.h - 10}" rx="3" fill="${col}" opacity="${it.needs_review ? .55 : .85}"/>`);
-      if (it.open) out.push(`<text x="${xb + 4}" y="${L2.y + L2.h / 2 + 4}" font-size="11" fill="${col}">no resume</text>`);
-      return;
+  /* a lane with hundreds of marks in view (a case with thousands of power cycles, zoomed out) keeps its most important
+     one per slot of a mark's width, and the tooltip says how many more are there: it stays a few thousand nodes and
+     pans smoothly. Lanes with fewer marks draw every one, as before */
+  const LOD = 300;
+  const more = (n) => (n > 1 ? `<br><i>+${(n - 1).toLocaleString()} more here · zoom in</i>` : "");
+  const bin = (list, px, rank, w = 3) => {   // w: pixels per slot, about a mark's width - closer marks overlap anyway
+    if (list.length <= LOD) return list.map((m) => ({ m, n: 1 }));
+    const best = new Map();
+    for (const m of list) {
+      const k = Math.round(px(m) / w), b = best.get(k);
+      if (!b) best.set(k, { m, n: 1 });
+      else { b.n++; if (rank(m) > rank(b.m)) b.m = m; }
     }
-    const a = it.last_alive_ts || it.boot_ts, b = it.boot_ts; if (!vis(a, b)) return;
-    const [xa, xb] = clipX(a, b), cy = L1.y + L1.h / 2;
-    out.push(`<line x1="${xa}" x2="${xb}" y1="${cy}" y2="${cy}" stroke="${col}" stroke-width="2" stroke-dasharray="3 3" opacity=".7"/>`);
-    out.push(`<g class="hit mk" data-id="${it.id}" data-tip="${tip}" transform="translate(${x(a)},${cy})"><circle r="${it.needs_review ? 8 : 7}" fill="${col}" stroke="var(--panel)" stroke-width="2"/>
+    return [...best.values()];
+  };
+  const T = (e) => e._t ?? (e._t = tsOf(e.time));
+  // sessions: with hundreds in view, ones that touch at this zoom become one bar
+  const L0 = L.power, inView = c.sessions.filter((s) => vis(s.start_ts, s.end_ts)), merge = inView.length > LOD;
+  let run = null;
+  const flush = () => {
+    if (!run) return; const s = run.first;
+    const tip = run.n === 1 ? `<b>Boot session ${s.id}</b>${fmtTs(s.start_ts)} → ${fmtTs(s.end_ts)}<br>${s.boot_type || (s.partial_start ? "started before log" : "")}`
+      : `<b>${run.n.toLocaleString()} boot sessions</b>${fmtTs(s.start_ts)} → ${fmtTs(run.end)}<br><i>zoom in to see each</i>`;
+    out.push(`<rect class="hit" data-tip="${esc(tip)}" x="${run.a}" y="${L0.y + 6}" width="${Math.max(2, run.b - run.a)}" height="${L0.h - 12}" rx="4" fill="var(--accent)" opacity=".28"/>`);
+  };
+  inView.forEach((s) => {
+    const [a, b] = clipX(s.start_ts, s.end_ts);
+    if (merge && run && a <= run.b + 1) { run.b = Math.max(run.b, b); run.n++; run.end = s.end_ts; }
+    else { flush(); run = { a, b, n: 1, first: s, end: s.end_ts }; }
+  });
+  flush();
+  // transitions and sleeps: a hard shutdown or one that needs review wins its pixel
+  const L1 = L.trans, L2 = L.sleep, TR = { hard: 4, unknown: 3, restart: 2, shutdown: 1 };
+  const tipOf = (it) => `<b>${it.id} · ${TYPES[it.type].label}</b>${esc(it.subtype)}<br>${fmtTs(it.time_ts)} · ${Math.round(it.confidence * 100)}%${it.needs_review ? " · needs review" : ""}${isSuspect(it) ? `<br>Drive caused it? ${esc(it.drive.cause_label)}` : ""}${hlCycle(it) ? ` · ${esc(it.drive.highlight_label)}` : ""}${it.software && it.type !== "sleep" && SW_CLS[it.software.strength] ? `<br>Trigger: ${esc(it.software.label)} (${esc(it.software.strength_label)})` : ""}`;
+  const span2 = (it) => (it.type === "sleep" ? [it.start_ts || it.end_ts, it.end_ts || it.start_ts] : [it.last_alive_ts || it.boot_ts, it.boot_ts]);
+  const sleeps = [], trans = [];
+  c.items.forEach((it) => { const [a, b] = span2(it); if (vis(a, b)) (it.type === "sleep" ? sleeps : trans).push(it); });
+  bin(sleeps, (it) => clipX(...span2(it))[0], (it) => (it.open ? 2 : 0) + (it.needs_review ? 1 : 0)).forEach(({ m: it, n }) => {
+    const [xa, xb] = clipX(...span2(it)), col = TYPES.sleep.color;
+    out.push(`<rect class="hit mk" data-id="${it.id}" data-tip="${esc(tipOf(it) + more(n))}" x="${xa}" y="${L2.y + 5}" width="${Math.max(5, xb - xa)}" height="${L2.h - 10}" rx="3" fill="${col}" opacity="${it.needs_review ? .55 : .85}"/>`);
+    if (it.open) out.push(`<text x="${xb + 4}" y="${L2.y + L2.h / 2 + 4}" font-size="11" fill="${col}">no resume</text>`);
+  });
+  bin(trans, (it) => x(span2(it)[0]), (it) => (it.needs_review ? 10 : 0) + (TR[it.type] || 0), 6).forEach(({ m: it, n }) => {
+    const [a, b] = span2(it), [xa, xb] = clipX(a, b), cy = L1.y + L1.h / 2, col = TYPES[it.type].color;
+    if (xb - xa >= 1) out.push(`<line x1="${xa}" x2="${xb}" y1="${cy}" y2="${cy}" stroke="${col}" stroke-width="2" stroke-dasharray="3 3" opacity=".7"/>`);
+    out.push(`<g class="hit mk" data-id="${it.id}" data-tip="${esc(tipOf(it) + more(n))}" transform="translate(${x(a)},${cy})"><circle r="${it.needs_review ? 8 : 7}" fill="${col}" stroke="var(--panel)" stroke-width="2"/>
       ${it.needs_review ? '<circle r="11" fill="none" stroke="var(--warn)" stroke-width="1.5"/>' : ""}</g>`);
   });
-  // drive events: the highlighted vendor's drive on its own lane
-  c.storage_events.forEach((e) => {
-    const t = tsOf(e.time); if (!vis(t, t)) return;
-    const col = STATE_COLOR[e.state] || "var(--warn)", l = isHl(e.hl) ? L.hl : L.drive;
+  // drive events: the highlighted vendor's drive on its own lane; the worst state wins its pixel
+  const SEV = { missing: 5, reset: 4, error: 3, slow: 2, warning: 1 };
+  bin(c.storage_events.filter((e) => vis(T(e), T(e))), (e) => x(T(e)) + (isHl(e.hl) ? 3e6 : 0), (e) => (SEV[e.state] || 0) * 2 + (e.hl === "yes" ? 1 : 0)).forEach(({ m: e, n }) => {
+    const t = T(e), col = STATE_COLOR[e.state] || "var(--warn)", l = isHl(e.hl) ? L.hl : L.drive;
     const who = e.dev_basis !== undefined ? `<br>${esc(e.dev || "drive not identified")}${e.hl === "probably" ? " (probably)" : ""}` : "";
-    out.push(`<rect class="hit ctxe" data-t="${t}" data-tip="${esc(`<b>${e.eid} · ${esc(e.label)}</b>${esc(e.provider)}<br>${fmt(e.time)}${who}`)}" x="${x(t) - 2}" y="${l.y + 4}" width="4" height="${l.h - 8}" rx="1.5" fill="${col}" ${e.hl === "probably" ? 'opacity=".6"' : ""}/>`);
+    out.push(`<rect class="hit ctxe" data-t="${t}" data-tip="${esc(`<b>${e.eid} · ${esc(e.label)}</b>${esc(e.provider)}<br>${fmt(e.time)}${who}${more(n)}`)}" x="${x(t) - 2}" y="${l.y + 4}" width="4" height="${l.h - 8}" rx="1.5" fill="${col}" ${e.hl === "probably" ? 'opacity=".6"' : ""}/>`);
   });
-  // apps & updates: problems and restart-related events
-  if (L.sw) c.software_events.forEach((e) => {
-    if (e.state === "info" && !["restart", "reboot"].includes(e.kind)) return;
-    const t = tsOf(e.time); if (!vis(t, t)) return;
-    const col = e.state === "error" ? "var(--bad)" : ["restart", "reboot"].includes(e.kind) ? "var(--accent)" : "var(--warn)";
-    out.push(`<rect class="hit ctxe" data-t="${t}" data-tip="${esc(`<b>${e.eid} · ${esc(e.label)}</b>${esc(e.subject || e.provider)}<br>${fmt(e.time)}`)}" x="${x(t) - 2}" y="${L.sw.y + 4}" width="4" height="${L.sw.h - 8}" rx="1.5" fill="${col}"/>`);
+  // apps & updates: problems and restart-related events; a crash wins its pixel over a restart over a warning
+  const restartish = (e) => ["restart", "reboot"].includes(e.kind);
+  if (L.sw) bin(c.software_events.filter((e) => (e.state !== "info" || restartish(e)) && vis(T(e), T(e))), (e) => x(T(e)),
+    (e) => (e.state === "error" ? 3 : restartish(e) ? 2 : 1)).forEach(({ m: e, n }) => {
+    const t = T(e), col = e.state === "error" ? "var(--bad)" : restartish(e) ? "var(--accent)" : "var(--warn)";
+    out.push(`<rect class="hit ctxe" data-t="${t}" data-tip="${esc(`<b>${e.eid} · ${esc(e.label)}</b>${esc(e.subject || e.provider)}<br>${fmt(e.time)}${more(n)}`)}" x="${x(t) - 2}" y="${L.sw.y + 4}" width="4" height="${L.sw.h - 8}" rx="1.5" fill="${col}"/>`);
   });
   // coverage
   chans.forEach((ch, i) => {
@@ -745,21 +833,12 @@ function drawTimeline() {
     if (!vis(g.start_ts, g.end_ts)) return; const [a, b] = clipX(g.start_ts, g.end_ts);
     out.push(`<rect class="hit" data-tip="${esc(`<b>${g.missing} records missing</b>${esc(g.channel)}<br>${fmt(g.start)} → ${fmt(g.end)}`)}" x="${a}" y="26" width="${Math.max(3, b - a)}" height="${H - 30}" fill="var(--warn)" opacity=".14"/>`);
   });
-  svg.innerHTML = out.join("");
-  const tt = $("#tooltip");
-  $$(".hit", svg).forEach((n) => {
-    n.addEventListener("mousemove", (e) => { tt.innerHTML = n.dataset.tip; tt.style.opacity = 1; tt.style.left = Math.min(innerWidth - 310, e.clientX + 14) + "px"; tt.style.top = e.clientY + 14 + "px"; });
-    n.addEventListener("mouseleave", () => (tt.style.opacity = 0));
-  });
-  $$(".mk", svg).forEach((n) => n.addEventListener("click", (e) => {
-    e.stopPropagation(); tt.style.opacity = 0;
-    const it = c.items.find((x) => x.id === n.dataset.id); if (it?.time_ts) setCursor(it.time_ts);
-    openDetail(n.dataset.id);
-  }));
-  $$(".ctxe", svg).forEach((n) => n.addEventListener("click", () => { tt.style.opacity = 0; setCursor(+n.dataset.t); }));
-  $$(".mk,.ctxe", svg).forEach((n) => n.addEventListener("mousedown", (e) => e.stopPropagation()));
+  svg.innerHTML = out.join("");   // tooltips and clicks: the listeners set once in tabTimeline
   placeCursor();
 }
+/* pans and zooms redraw at most once a frame */
+let drawQueued = false;
+function queueDraw() { if (!drawQueued) { drawQueued = true; requestAnimationFrame(() => { drawQueued = false; drawTimeline(); }); } }
 
 /* ------------------------------------------------------------------ timeline line: the logs at one moment */
 /* the browser holds every event's time and log (one small index per case), so moving the line updates the counts,
@@ -927,12 +1006,12 @@ function tabDrive() {
       (w === "all" || (w === "hl" ? isHl(e.hl) : w === "no" ? e.hl === "no" : !e.hl)) &&
       (!m || m([e.eid], `${e.label} ${e.provider} ${e.dev || ""} ${e.dev_basis || ""} ${e.channel}`)));
     $("#stN").textContent = rows.length < c.storage_events.length ? `${rows.length.toLocaleString()} of ${c.storage_events.length.toLocaleString()}` : "";
-    $("#stT").innerHTML = rows.length ? `<thead><tr><th>Time (${tzLabel()})</th><th>ID</th><th>Meaning</th><th>Provider</th><th>Drive</th><th>Log</th><th>State</th><th>Near</th></tr></thead><tbody>${rows.map((e) => `
+    pageRows($("#stT"), `<thead><tr><th>Time (${tzLabel()})</th><th>ID</th><th>Meaning</th><th>Provider</th><th>Drive</th><th>Log</th><th>State</th><th>Near</th></tr></thead>`, rows, (e) => `
       <tr class="click ${isHl(e.hl) ? "sam" : ""}" data-idx="${e.idx}"><td style="white-space:nowrap">${fmt(e.time)}</td><td class="mono"><b>${e.eid}</b></td><td>${esc(e.label)}</td>
         <td>${esc(e.provider.replace("Microsoft-Windows-", ""))}</td>
         <td>${known ? `<span class="chips">${devBadge(e)}<span class="small">${esc(e.dev || "not identified")}</span></span><div class="muted small">${esc(e.dev_basis || "")}</div>` : '<span class="muted small">re-run to identify</span>'}</td>
-        <td class="muted small">${esc(shortChan(e.channel))}</td><td>${stateChip(e.state)}</td><td class="near">${nearCell(tsOf(e.time))}</td></tr>`).join("")}</tbody>`
-      : '<tr><td class="empty">No storage warnings or errors match.</td></tr>';
+        <td class="muted small">${esc(shortChan(e.channel))}</td><td>${stateChip(e.state)}</td><td class="near">${nearCell(tsOf(e.time))}</td></tr>`,
+      "No storage warnings or errors match.");
   };
   onRows($("#stT"), (r) => openContext(r.dataset.idx, "Storage event"));
   bind(["stQ", "stF", "stW"], draw); draw();
@@ -956,12 +1035,12 @@ function tabSoftware() {
     const rows = evs.filter((e) => (f === "all" || (f === "problems" ? e.state !== "info" || ["restart", "reboot"].includes(e.kind) : e.group === f)) &&
       (!m || m([e.eid], `${e.label} ${e.subject || ""} ${e.detail || ""} ${e.provider} ${e.channel}`)));
     $("#swN").textContent = rows.length < evs.length ? `${rows.length.toLocaleString()} of ${evs.length.toLocaleString()}` : "";
-    $("#swT").innerHTML = rows.length ? `<thead><tr><th>Time (${tzLabel()})</th><th>ID</th><th>What</th><th>App / update / service</th><th>Source</th><th>Severity</th><th>Near</th></tr></thead><tbody>${rows.map((e) => `
+    pageRows($("#swT"), `<thead><tr><th>Time (${tzLabel()})</th><th>ID</th><th>What</th><th>App / update / service</th><th>Source</th><th>Severity</th><th>Near</th></tr></thead>`, rows, (e) => `
       <tr class="click" data-idx="${e.idx}"><td style="white-space:nowrap">${fmt(e.time)}</td><td class="mono"><b>${e.eid}</b></td><td>${esc(e.label)}</td>
         <td>${esc(e.subject || "")}${e.detail ? `<div class="muted small">${esc(e.detail)}</div>` : ""}</td>
         <td class="muted small">${esc(e.provider.replace("Microsoft-Windows-", ""))} · ${esc(shortChan(e.channel))}</td><td>${stateChip(e.state)}</td>
-        <td class="near">${nearCell(tsOf(e.time))}</td></tr>`).join("")}</tbody>`
-      : `<tr><td class="empty">${m && f !== "all" ? "No match here — try Show: Everything." : "Nothing of this kind was logged."}</td></tr>`;
+        <td class="near">${nearCell(tsOf(e.time))}</td></tr>`,
+      m && f !== "all" ? "No match here — try Show: Everything." : "Nothing of this kind was logged.");
   };
   onRows($("#swT"), (r) => openContext(r.dataset.idx, "App / update event"));
   bind(["swQ", "swF"], draw); draw();

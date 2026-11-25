@@ -98,7 +98,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
     <div><b>Question 3</b>When does WELA say the drive caused it — and that it is Samsung's?</div>
     <div><b>Question 4</b>How is an app, update or service singled out as the trigger?</div>
   </div>
-  <div class="meta"><span>Version 0.1.0</span><span>Branch <b>main</b></span><span>25 November 2026</span><span>Prepared by Hitesh Kumar</span></div>
+  <div class="meta"><span>Version 0.1.0</span><span>Branch <b>main</b></span><span>26 November 2026</span><span>Prepared by Hitesh Kumar</span></div>
 </section>
 
 <!-- ============================================================ CONTENTS -->
@@ -534,13 +534,13 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; break-i
 <h1 id="eng"><span class="n">11</span>Engineering facts</h1>
 <table class="t">
   <thead><tr><th style="width:20%">Area</th><th>Fact</th></tr></thead><tbody>
-  <tr><td class="k">Stack</td><td>Python 3.9+ standard library only (3,282 lines); <code>.evtx</code> read with Windows' own wevtutil — nothing to install. The UI is a local web page in plain JavaScript and CSS (1,391 lines), no frameworks, no CDN, works offline.</td></tr>
+  <tr><td class="k">Stack</td><td>Python 3.9+ standard library only (3,296 lines); <code>.evtx</code> read with Windows' own wevtutil — nothing to install. The UI is a local web page in plain JavaScript and CSS (1,474 lines), no frameworks, no CDN, works offline.</td></tr>
   <tr><td class="k">Privacy</td><td>The local server binds to 127.0.0.1 only; no network calls; cases are saved under <code>./cases</code> on the engineer's PC. Customer logs never leave the machine.</td></tr>
   <tr><td class="k">Determinism</td><td>Same logs + same catalogue → same verdicts. No randomness, no model, no internet lookups.</td></tr>
   <tr><td class="k">Configurable</td><td>Every event ID, weight, window and vendor rule is in <code>wela/catalog.py</code>; <code>wela_config.json</code> overrides any of it. The drive window, trigger window, restart gap, review line and quiet-gap length are also in the UI's <i>Analysis settings</i>.</td></tr>
   <tr><td class="k">Outputs</td><td>HTML report, Excel workbook (written directly as Office Open XML — no library), CSV, JSON; a command line for batch runs; the full result is saved as one JSON per case.</td></tr>
   <tr><td class="k">Tests (54)</td><td>Demo scenario with known answers (16 power cycles, 5 sleeps) · 10; power-cycle rules · 13; which drive · 10; software trigger · 16; folder selection · 2; timeline line (event index and rows) · 2; robustness — 30 rounds of up to 400 random, malformed events through the engine and every export · 1.</td></tr>
-  <tr><td class="k">Speed (analysis step, laptop)</td><td>19,640 events / 640 power cycles in 0.21 s · 98,200 / 3,200 in 1.55 s · 196,400 / 6,400 in 4.41 s. Reading <code>.evtx</code> with wevtutil adds time in proportion to file size. The timeline line on 196,400 events: 0.12 ms per move, one frame per move while dragging — the browser keeps every event's time and log.</td></tr>
+  <tr><td class="k">Speed (analysis step, laptop)</td><td>19,640 events / 640 power cycles in 0.21 s · 98,200 / 3,200 in 1.55 s · 196,400 / 6,400 in 4.41 s. Reading <code>.evtx</code> with wevtutil adds time in proportion to file size. The timeline line on 196,400 events: 0.12 ms per move, one frame per move while dragging — the browser keeps every event's time and log. Every tab of that case (8,400 power cycles) opens in about 35 ms: long tables add rows as you scroll.</td></tr>
 </tbody></table>
 
 <!-- ============================================================ 12 LIMITS -->

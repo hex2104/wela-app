@@ -145,6 +145,10 @@ details.adv summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:
 .fchip.on{background:var(--accent);border-color:var(--accent);color:#fff}
 :root[data-theme="dark"] .fchip.on{color:#0f1320}
 .fchip .badge{background:rgba(127,127,127,.18);color:inherit}
+.menu-pop a{cursor:pointer}
+.menu-pop a.on{color:var(--accent);font-weight:600}
+#cyMore .menu-pop{left:0;right:auto;min-width:230px}
+td.tmore{text-align:center;color:var(--muted);font-size:12px;padding:10px 12px;cursor:pointer;border-bottom:none}
 
 /* ---------- tables ---------- */
 .tbl-wrap{overflow:auto}

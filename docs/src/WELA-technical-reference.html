@@ -107,7 +107,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
     <div><b>Question 3</b>Which drive — is it the Samsung drive?</div>
     <div><b>Question 4</b>What triggered it — an app, an update, the user?</div>
   </div>
-  <div class="meta"><span>Version 0.1.0</span><span>Branch <b>main</b></span><span>25 November 2026</span><span>Prepared by Hitesh Kumar</span></div>
+  <div class="meta"><span>Version 0.1.0</span><span>Branch <b>main</b></span><span>26 November 2026</span><span>Prepared by Hitesh Kumar</span></div>
 </section>
 
 <!-- ============================================================ CONTENTS -->
@@ -251,10 +251,10 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
   <tr><td class="mono">wela/catalog.py</td><td>The knowledge base: every power signal, storage and software event ID, evidence weight, threshold, crash code, vendor rule and shutdown-initiator pattern.</td><td>282</td></tr>
   <tr><td class="mono">wela/engine.py</td><td>The analysis pipeline (chapter 5): from timeline to verdicts, confidence, drive identity, software trigger and the app / update lists.</td><td>1,477</td></tr>
   <tr><td class="mono">wela/report.py</td><td>Self-contained HTML report, Excel workbook written directly as Office Open XML (no library), CSV and JSON.</td><td>406</td></tr>
-  <tr><td class="mono">wela/server.py</td><td>Local HTTP server and JSON API; native file / folder picker.</td><td>246</td></tr>
-  <tr><td class="mono">wela/store.py</td><td>Saves each case under <code>./cases/&lt;id&gt;</code> (result JSON + compressed events); keeps the open case's events in memory and builds the timeline's event index from them.</td><td>145</td></tr>
+  <tr><td class="mono">wela/server.py</td><td>Local HTTP server and JSON API; native file / folder picker.</td><td>251</td></tr>
+  <tr><td class="mono">wela/store.py</td><td>Saves each case under <code>./cases/&lt;id&gt;</code> (result JSON + compressed events); keeps the open case's events in memory and builds the timeline's event index from them.</td><td>154</td></tr>
   <tr><td class="mono">wela/demo.py</td><td>Synthetic demo logs covering every tricky scenario, with the expected answers the tests check.</td><td>312</td></tr>
-  <tr><td class="mono">web/ (app.js, app.css, index.html)</td><td>The UI — vanilla JavaScript and CSS, no frameworks or CDN, works offline; light and dark themes.</td><td>1,391</td></tr>
+  <tr><td class="mono">web/ (app.js, app.css, index.html)</td><td>The UI — vanilla JavaScript and CSS, no frameworks or CDN, works offline; light and dark themes.</td><td>1,474</td></tr>
   <tr><td class="mono">tests/test_engine.py</td><td>54 automated tests (chapter 14).</td><td>589</td></tr>
 </tbody></table>
 
@@ -653,7 +653,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 <h1 id="tour"><span class="n">12</span>Tour of the application</h1>
 <div class="lead">Six tabs per case. Start the app with <code>python run_wela.py</code>; the browser opens at http://127.0.0.1:8765.</div>
 <figure><img src="img/s_overview.jpg" style="max-height:150mm;object-fit:cover;object-position:top"><figcaption><b>Overview.</b> Tiles per power-cycle type (click to filter). "Did the drive cause it?" with the teal <i>with Samsung drive problems</i> tile and Samsung badges on the suspect power cycles. "What triggered it?" breaks power cycles down by software trigger (click a bar to list them). Hard-shutdown causes, needs-review list, log coverage, storage and app/update summaries follow below.</figcaption></figure>
-<figure class="pb"><img src="img/s_cycles.jpg"><figcaption><b>Power cycles.</b> One row per power cycle and sleep: time, type, detail, off time, confidence, drive state with Samsung badge (teal stripe on the row), drive verdict, software trigger with its strength and confidence, flags. Filters include <i>Samsung drive</i> and <i>Triggered by software</i>. Search: a number finds those event IDs exactly — in the evidence and in each power cycle's drive and app lists; anything else searches the text.</figcaption></figure>
+<figure class="pb"><img src="img/s_cycles.jpg"><figcaption><b>Power cycles.</b> One row per power cycle and sleep: time, type, detail, off time, confidence, drive state with Samsung badge (teal stripe on the row), drive verdict, software trigger with its strength and confidence, flags. Filters on one row — <i>All, Shutdown, Restart, Hard, Sleep</i> and <i>Samsung drive</i>; <i>Undetermined, Needs review, Drive suspected, Drive errors after</i> and <i>Triggered by software</i> sit under <b>More</b>, whose button names the one in use. Long lists show 150 rows at once and add the next as you scroll. Search: a number finds those event IDs exactly — in the evidence and in each power cycle's drive and app lists; anything else searches the text.</figcaption></figure>
 <div class="side">
   <figure style="margin:0"><img src="img/s_drawer_drive.jpg"></figure>
   <div>
@@ -671,7 +671,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 </div>
 <figure class="pb"><img src="img/s_drive.jpg"><figcaption><b>Drive tab.</b> Disk cards from the inventory (Samsung outlined in teal, other vendors labelled), a per-drive summary (named or mapped / probably / other drive / not identified), drive and state filters, and every storage warning/error with the drive and how it was identified. <b>Near</b> shows the time since the power cycle before and to the one after (click either to open it); search by event ID or text.</figcaption></figure>
 <figure><img src="img/s_software.jpg"><figcaption><b>Apps &amp; updates tab.</b> Every crash, hang, Windows Update, installer and service event, filterable by kind and searchable by event ID, with the app / update / service named; <b>Near</b> gives the time since the power cycle before and to the one after.</figcaption></figure>
-<figure><img src="img/s_timeline.jpg"><figcaption><b>Timeline.</b> Zoom and pan across the whole log period: powered-on sessions, transitions, sleeps, a dedicated <b>Samsung drive</b> lane, other storage events, the <b>Apps &amp; updates</b> lane, and log coverage per channel; record gaps shaded. <b>The line</b> — drag it, click anywhere, or step with ← → (Shift: a power cycle at a time) — lists below it every <b>System</b>, <b>Application</b> and <b>Storport</b> event within ± 5 s (1–60 s to choose), each with its offset from the line and its log time to the millisecond; here it sits on T5's second NVMe reset, with the I/O retries and Storport warnings that led up to it. Click a row for its full data; a power-cycle marker opens its details.</figcaption></figure>
+<figure><img src="img/s_timeline.jpg"><figcaption><b>Timeline.</b> Zoom and pan across the whole log period: powered-on sessions, transitions, sleeps, a dedicated <b>Samsung drive</b> lane, other storage events, the <b>Apps &amp; updates</b> lane, and log coverage per channel; record gaps shaded. <b>The line</b> — drag it, click anywhere, or step with ← → (Shift: a power cycle at a time) — lists below it every <b>System</b>, <b>Application</b> and <b>Storport</b> event within ± 5 s (1–60 s to choose), each with its offset from the line and its log time to the millisecond; here it sits on T5's second NVMe reset, with the I/O retries and Storport warnings that led up to it. Click a row for its full data; a power-cycle marker opens its details. With hundreds of marks in view (a case with thousands of power cycles, zoomed out), each lane shows its most important mark per slot and the tooltip says how many more are there.</figcaption></figure>
 <p class="small">Also: <b>Data quality</b> tab (chapter 11), a case list in the sidebar (cases are saved locally), time-zone selector, dark mode, and analysis settings on the home screen (drive window, software trigger window, restart gap, review threshold, quiet-gap length). The path box on the home screen starts empty for every new analysis.</p>
 
 <!-- ============================================================ 13 EXPORTS -->
@@ -745,6 +745,7 @@ python -m unittest discover -s tests -v</pre>
 </tbody></table>
 <h2>Other checks done for this release</h2>
 <ul>
+  <li>Tabs on the 196,400-event case (8,400 power cycles), until painted: Power cycles 517 → 33 ms, Drive 367 → 33 ms, Apps &amp; updates 150 → 33 ms, a search 94 → 8 ms; timeline panning 154 → 24 ms a frame (35,793 → 4,144 nodes). The demo timeline draws pixel for pixel as before.</li>
   <li>The timeline line in Chrome on a 196,400-event case: 0.12 ms to move it (counts, offsets and order come from the index in the browser), one frame per move while dragging, and the rows of a part not yet visited in about 50 ms. The index is 1.7 MB, read in the background when the case opens.</li>
   <li>Click, drag, ← → and Shift, a row's full data, the ± window, a click on an event mark, and the jump links of an empty log — driven in a real browser, with no script errors.</li>
   <li>Every tab and the detail drawer rendered in a real browser (headless Chrome) — the demo case, a case saved by the previous version and a busy case — with a check for script errors.</li>
@@ -1065,8 +1066,10 @@ web/                   UI (vanilla HTML/CSS/JS, works offline)
 tests/                 unittest suite (demo scenario, rule tests, robustness test)
 docs/                  team walkthrough (.pptx / .pdf), this reference and its source (src/)</pre>
 <h2>This release (main)</h2>
-<h3>Update of 25 November 2026</h3>
+<h3>Update of 26 November 2026</h3>
 <ul>
+  <li><b>Power cycles filters on one row:</b> All, Shutdown, Restart, Hard, Sleep and Samsung drive; the rest under <b>More</b>.</li>
+  <li><b>Big cases stay quick:</b> long tables show 150 rows at once and add more as you scroll; the timeline keeps the most important mark per slot when hundreds are in view and redraws once a frame; a case opens without re-encoding its file.</li>
   <li><b>The timeline line:</b> drag it, click the timeline or step with ← → — the System, Application and Storport events within ± 5 s are listed under the timeline with their offset and log time, and follow the line as it moves.</li>
   <li><b>Fast on big cases:</b> the browser keeps every event's time and log, so moving the line costs 0.12 ms on 196,400 events; event details come 256 at a time and are kept. <b>Quality:</b> 2 new tests (54 total).</li>
 </ul>

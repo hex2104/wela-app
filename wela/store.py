@@ -43,6 +43,15 @@ def save(case_id: str, result: dict, events: List[Event]) -> None:
         _cache[case_id] = rows
 
 
+def result_bytes(case_id: str) -> Optional[bytes]:
+    """The saved result as stored - already JSON, so the UI gets it without decoding and re-encoding it."""
+    p = os.path.join(_dir(case_id), "result.json")
+    if not os.path.isfile(p):
+        return None
+    with open(p, "rb") as fh:
+        return fh.read()
+
+
 def load_result(case_id: str) -> Optional[dict]:
     p = os.path.join(_dir(case_id), "result.json")
     if not os.path.isfile(p):
