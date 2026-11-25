@@ -179,6 +179,21 @@ class DemoScenario(unittest.TestCase):
         self.assertTrue(report.to_csv(self.r).startswith("﻿ID".encode("utf-8")))
         json.loads(report.to_json(self.r))
 
+    def test_exports_leave_account_names_out(self):
+        acc = {x["id"]: x["software"]["initiator"] for x in self.r["items"] if (x.get("software") or {}).get("initiator")}
+        self.assertEqual((acc["T2"]["user"], acc["T2"]["account_kind"]), ("DEMO\\engineer", "user"))
+        self.assertEqual((acc["T3"]["user"], acc["T3"]["account_kind"]), ("NT AUTHORITY\\SYSTEM", "system"))
+        hidden = report.redact(self.r)
+        with zipfile.ZipFile(__import__("io").BytesIO(report.to_xlsx(hidden))) as z:
+            xlsx = "".join(z.read(n).decode() for n in z.namelist() if n.startswith("xl/worksheets/"))
+        for text in (report.to_csv(hidden).decode("utf-8"), report.to_html(hidden).decode("utf-8"), xlsx,
+                     json.dumps(json.loads(report.to_json(hidden)))):
+            self.assertNotIn("engineer", text)              # the person's account: hidden everywhere
+            self.assertIn("[user account]", text)
+            self.assertIn("SYSTEM", text)                   # Windows' own account is no person: kept
+        self.assertIn("DEMO\\engineer · user account", report.to_csv(self.r).decode("utf-8"))   # kept when asked for
+        self.assertEqual(acc["T2"]["user"], "DEMO\\engineer")                                     # the case is untouched
+
 
 class Rules(unittest.TestCase):
     def test_clean_shutdown_with_6006_missing_still_clean(self):
@@ -413,6 +428,18 @@ class SoftwareTrigger(unittest.TestCase):
     def test_clean_stop_without_1074_is_not_logged(self):
         s = self.sw(clean_cycle())
         self.assertEqual((s["trigger"], s["strength"], s["confidence"]), ("not_logged", "unknown", None))
+
+    def test_whose_account_asked(self):
+        kinds = {u: engine.account_kind(u) for u in ("DEMO\\engineer", "engineer@corp.example", "NT AUTHORITY\\SYSTEM",
+                                                     "NT-AUTORITÄT\\SYSTEM", "AUTORITE NT\\Système", "NT AUTHORITY\\LOCAL SERVICE",
+                                                     "NT SERVICE\\TrustedInstaller", "CORP\\PC01$", "")}
+        self.assertEqual(list(kinds.values()), ["user", "user", "system", "system", "system", "service", "service", "computer", ""])
+        s = self.sw(clean_cycle([req("2026-01-01T18:00:00Z", "C:\\Users\\jdoe\\Downloads\\setup.exe", 0x80040002)]))
+        self.assertEqual((s["initiator"]["user"], s["initiator"]["account_label"]), ("PC\\user", "user account"))
+        r = report.redact(engine.analyze(clean_cycle([req("2026-01-01T18:00:00Z", "C:\\Users\\jdoe\\Downloads\\setup.exe", 0x80040002)]),
+                                         catalog.load_config()))
+        init = transitions(r)[1]["software"]["initiator"]
+        self.assertEqual((init["user"], init["path"]), ("[user account]", "C:\\Users\\[user account]\\Downloads\\setup.exe"))
 
     def test_pending_update_makes_a_bare_restart_possible(self):
         s = self.sw(clean_cycle([ev("2026-01-01T12:00:00Z", "Microsoft-Windows-WindowsUpdateClient", 21, updateTitle="KB5000001")]))

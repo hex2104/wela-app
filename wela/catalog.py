@@ -227,6 +227,15 @@ DEFAULTS = {
         ["shellexperiencehost.exe", "user"], ["shellhost.exe", "user"], ["winlogon.exe", "user"],
         ["logonui.exe", "user"],
     ],
+    # whose account a shutdown request ran under (1074 "on behalf of"): Windows' own accounts, in several languages -
+    # matched on the whole name, on the part after "\", or on a domain ending in "\". None of them is a person;
+    # any other account is a user account (whether it is an administrator is not in these logs)
+    "windows_accounts": {
+        "system": ["system", "système", "sistema", "systeem", "s-1-5-18"],
+        "service": ["local service", "network service", "lokaler dienst", "netzwerkdienst", "service local",
+                    "service réseau", "servicio local", "servicio de red", "s-1-5-19", "s-1-5-20",
+                    "nt service\\", "iis apppool\\", "window manager\\", "font driver host\\"],
+    },
 
     # ---- timing / thresholds (seconds) ---------------------------------------
     "settings": {

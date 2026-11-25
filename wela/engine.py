@@ -90,9 +90,27 @@ WER_KINDS = {"bluescreen": ("bluescreen", "Crash report: blue screen"),
 SW_ERROR = {"crash", "critical", "bluescreen", "fail"}
 SW_WARN = {"hang", "kernel", "driver", "memory", "reboot"}
 SW_FOUND = ("confirmed", "likely", "possible")
+ACCOUNT_LABELS = {"user": "user account", "system": "Windows itself", "service": "a Windows service",
+                  "computer": "the computer's own account"}
 
 
 # --------------------------------------------------------------------------- helpers
+def account_kind(user: str, cfg: dict = None) -> str:
+    """Whose account a shutdown request ran under (1074 "on behalf of"): system, service, computer or user; "" if none.
+    Only Windows' own accounts are certain to be no person; the logs do not say whether a user account is an admin."""
+    u = (user or "").strip().casefold()
+    if not u:
+        return ""
+    name, acc = u.rsplit("\\", 1)[-1], (cfg or DEFAULTS).get("windows_accounts", {})
+
+    def hit(words):
+        return any(u == w or name == w or (w.endswith("\\") and u.startswith(w)) for w in words)
+
+    if hit(acc.get("system", [])):
+        return "system"
+    if hit(acc.get("service", [])):
+        return "service"
+    return "computer" if name.endswith("$") else "user"
 def channel_kind(ch: str) -> str:
     c = (ch or "").lower()
     if "storport" in c:
@@ -1142,11 +1160,14 @@ class Analyzer:
         words = set(re.findall(r"[a-z]+", rtext.lower())) - {"planned", "unplanned"}
         same = bool(words) and words <= set(re.findall(r"[a-z]+", reason.lower()))
         code_txt = (f"0x{code:X}" + ("" if same else f" = {rtext}")) if code is not None else ""
+        user = (d.get("param7") or "").strip()
+        kind = account_kind(user, self.cfg)
         return {"process": re.split(r"[\\/]", path)[-1] if path else "", "path": path, "category": cat,
                 "label": TRIGGER_LABELS.get(cat, cat), "reason": reason,
                 "reason_text": reason + (f" [{code_txt}]" if reason and code_txt else code_txt),
                 "reason_code": f"0x{code:X}" if code is not None else "", "reason_decoded": rtext, "planned": planned,
-                "type": (d.get("param5") or "").strip(), "user": (d.get("param7") or "").strip(),
+                "type": (d.get("param5") or "").strip(), "user": user,
+                "account_kind": kind, "account_label": ACCOUNT_LABELS.get(kind, ""),
                 "comment": comment[:300], "time": iso(e.time), "idx": e.idx, "agrees": bool(agrees)}
 
     def _running(self, t0: float, t1: float) -> Optional[Event]:

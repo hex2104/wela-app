@@ -135,7 +135,7 @@ class Handler(BaseHTTPRequestHandler):
                 i0 = int(q.get("from", 0))
                 return self._json(store.event_rows(parts[2], i0, min(int(q.get("to", i0 + 256)), i0 + 4096)))
             if len(parts) == 4 and parts[1] == "cases" and parts[3].startswith("export."):
-                return self._export(parts[2], parts[3].split(".", 1)[1], int(q.get("tz", 0) or 0))
+                return self._export(parts[2], parts[3].split(".", 1)[1], int(q.get("tz", 0) or 0), q.get("names") == "1")
             return self._err("not found", 404)
         except Exception as exc:
             traceback.print_exc()
@@ -209,10 +209,12 @@ class Handler(BaseHTTPRequestHandler):
             sel = sel[max(0, len(sel) - limit):] if last else sel
         return self._json(sel)
 
-    def _export(self, cid, fmt, tz):
+    def _export(self, cid, fmt, tz, names=False):
         r = store.load_result(cid)
         if not r:
             return self._err("case not found", 404)
+        if not names:   # a report leaves the PC: people's account names stay behind unless asked for
+            r = report.redact(r)
         name = f"WELA_{cid}"
         if fmt == "html":
             body, ct = report.to_html(r, tz), "text/html; charset=utf-8"

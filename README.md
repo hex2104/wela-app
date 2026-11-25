@@ -29,6 +29,7 @@ In **VS Code**: open this folder, then press **F5** and pick **WELA: start UI**.
 ```bash
 python -m wela analyze "D:\Claims\DELL-123\Logs" --out report.html --tz 330
 python -m wela analyze System.evtx Application.evtx --out report.xlsx
+python -m wela analyze System.evtx --out report.xlsx --names   # keep people's account names (hidden by default)
 python -m unittest discover -s tests -v
 ```
 
@@ -91,7 +92,7 @@ Partition and Setup are not read from a folder: add them as files of their own.
 
    | Evidence | Verdict |
    |---|---|
-   | User32 1074 names the process that asked | **Confirmed** — Windows Update (TrustedInstaller, MoUsoCoreWorker …), software installer (msiexec …), OEM / vendor tool (Dell Command Update, Samsung Magician …), IT management (SCCM, Intune), script (shutdown.exe, PowerShell), system process crash (wininit, *"lsass.exe terminated unexpectedly"*) or user request (Start menu). The 1074 **reason code** is decoded too — it is the same in every Windows language, so "Update and restart" from the Start menu counts as Windows Update |
+   | User32 1074 names the process that asked | **Confirmed** — Windows Update (TrustedInstaller, MoUsoCoreWorker …), software installer (msiexec …), OEM / vendor tool (Dell Command Update, Samsung Magician …), IT management (SCCM, Intune), script (shutdown.exe, PowerShell), system process crash (wininit, *"lsass.exe terminated unexpectedly"*) or user request (Start menu). The 1074 **reason code** is decoded too — it is the same in every Windows language, so "Update and restart" from the Start menu counts as Windows Update. The account the request ran under is shown with its kind — a user account, or Windows itself (SYSTEM), a service or the computer's own account; the logs do not say whether an account is an administrator |
    | No 1074, but MsiInstaller 1005, Windows Update 22 or a 7031 service crash whose recovery action restarts the PC | **Likely** |
    | No 1074, but an update / install was waiting for a restart (WU 21, MSI 1038, Servicing 4) | **Possibly** (restarts only) |
    | Hard shutdown after a system process crash (csrss, lsass …), likely if the crash code is 0xEF / 0xF4 | **Likely / Possibly** |

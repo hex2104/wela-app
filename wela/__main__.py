@@ -1,7 +1,7 @@
 """Command line:
     python -m wela                      start the UI (default)
     python -m wela serve [--port 8765] [--no-browser]
-    python -m wela analyze <path> [<path> ...] [--out report.html|.xlsx|.csv|.json] [--tz 330]
+    python -m wela analyze <path> [<path> ...] [--out report.html|.xlsx|.csv|.json] [--tz 330] [--names]
     python -m wela demo [folder]        write demo logs
 """
 from __future__ import annotations
@@ -22,6 +22,8 @@ def main(argv=None):
     a.add_argument("paths", nargs="+")
     a.add_argument("--out", help="write report (.html, .xlsx, .csv or .json)")
     a.add_argument("--tz", type=int, default=0, help="display offset in minutes, e.g. 330 for IST")
+    a.add_argument("--names", action="store_true",
+                   help="keep people's account names in the report (hidden by default: a report leaves the PC)")
     d = sub.add_parser("demo", help="write demo logs")
     d.add_argument("folder", nargs="?", default="demo_logs")
     args = ap.parse_args(argv)
@@ -65,7 +67,8 @@ def main(argv=None):
     if args.out:
         fmt = args.out.rsplit(".", 1)[-1].lower()
         fn = {"html": report.to_html, "xlsx": report.to_xlsx, "csv": report.to_csv}.get(fmt)
-        data = fn(r, args.tz) if fn else report.to_json(r)
+        out = r if args.names else report.redact(r)
+        data = fn(out, args.tz) if fn else report.to_json(out)
         with open(args.out, "wb") as fh:
             fh.write(data)
         print(f"\n  report written to {args.out}")

@@ -5,12 +5,56 @@ import csv
 import html
 import io
 import json
+import re
 import zipfile
 from datetime import datetime, timedelta, timezone
 from xml.sax.saxutils import escape
 
+from .engine import ACCOUNT_LABELS, account_kind
+
 TYPE_LABEL = {"shutdown": "Normal shutdown", "restart": "Restart", "hard": "Hard shutdown",
               "unknown": "Undetermined", "sleep": "Sleep / resume"}
+
+# ----------------------------------------------------------------- people's names stay on the PC
+HIDDEN = "[user account]"
+_PROFILE = re.compile(r"(?i)(\\users\\)[^\\/\s\"'()]+")
+
+
+def redact(result: dict) -> dict:
+    """A copy of the result for an export that leaves the PC: a user account named in a shutdown request becomes
+    "[user account]" wherever it appears, and so does a profile folder in a path (C:\\Users\\<name>\\...). A claim
+    needs to know that a user shut the PC down, not who. Windows' own accounts (SYSTEM, services) are no person: kept."""
+    names = set()
+    for it in result.get("items", []):
+        init = (it.get("software") or {}).get("initiator") or {}
+        u = (init.get("user") or "").strip()
+        if u and (init.get("account_kind") or account_kind(u)) == "user":
+            names.add(u)
+    pats = [(n, re.compile(r"(?<![\w.\\-])" + re.escape(n) + r"(?![\w.-])")) for n in sorted(names, key=len, reverse=True)]
+
+    def clean(v):
+        if isinstance(v, str):
+            for n, p in pats:
+                if n in v:
+                    v = p.sub(HIDDEN, v)
+            return _PROFILE.sub(lambda m: m.group(1) + HIDDEN, v) if "\\" in v else v
+        if isinstance(v, list):
+            return [clean(x) for x in v]
+        if isinstance(v, dict):
+            return {k: clean(x) for k, x in v.items()}
+        return v
+
+    out = clean(result)
+    out["account_names"] = "hidden"
+    return out
+
+
+def _account(init: dict) -> str:
+    u = init.get("user") or ""
+    if not u or u == HIDDEN:
+        return u
+    label = init.get("account_label") or ACCOUNT_LABELS.get(account_kind(u), "")
+    return f"{u} · {label}" if label else u
 
 
 def _fmt(ts_iso, offset_min=0):
@@ -64,6 +108,7 @@ def rows(result: dict, offset_min: int = 0):
             "Software trigger": sw.get("label", ""),
             "Software verdict": _sw_verdict(sw),
             "Requested by": " - ".join(x for x in (init.get("process"), init.get("reason"), init.get("reason_code")) if x),
+            "Account": _account(init),
             "Software reasons": "; ".join(sw.get("reasons", [])),
             "Off / gap": it.get("gap") or it.get("duration") or "",
             "Boot type": it.get("boot_type") or "",
@@ -186,7 +231,7 @@ def to_xlsx(result: dict, offset_min: int = 0) -> bytes:
         hdr = list(data[0].keys())
         col = hdr.index(f"{hv} drive?")
         sheets.append(("Power cycles", [hdr] + [[r[h] for h in hdr] for r in data],
-                       [6, 20, 16, 34, 11, 12, 12, 16, 22, 22, 34, 70, 22, 18, 40, 70, 12, 26, 14, 60, 50, 60],
+                       [6, 20, 16, 34, 11, 12, 12, 16, 22, 22, 34, 70, 22, 18, 40, 30, 70, 12, 26, 14, 60, 50, 60],
                        lambda row: row[col] in (f"{hv} drive", f"Probably the {hv} drive")))
         sheets.append(("Drive windows", drive_rows(result, offset_min),
                        [6, 16, 30, 14, 16, 10, 20, 28, 9, 26, 10, 16, 30, 34, 36, 70], hl_problem(10, 11)))

@@ -124,6 +124,8 @@ const swConf = (s) => (s?.confidence != null ? ` · ${Math.round(s.confidence * 
 const swChip = (s) => (s?.trigger ? `<span class="chip ${SW_CLS[s.strength] || "nodata"}" title="${esc(s.strength_label + swConf(s))}">${esc(s.label)}</span>` : "");
 const isSoftware = (it) => ["confirmed", "likely", "possible"].includes(it.software?.strength) && it.software?.trigger !== "user";
 const swLabel = (k) => S.c?.trigger_labels?.[k] || k;
+/* whose account the shutdown request ran under: "DEMO\engineer · user account", "NT AUTHORITY\SYSTEM · Windows itself" */
+const accountText = (init) => (init?.user ? init.user + (init.account_label ? ` · ${init.account_label}` : "") : "");
 function fmtOff(s) {
   if (s == null) return "";
   const a = Math.abs(s);
@@ -304,7 +306,8 @@ function renderCase() {
         <div class="menu" id="expMenu"><button class="btn">${ICON.dl} Export</button>
           <div class="menu-pop">
             ${[["html", "HTML report", "to read / share"], ["xlsx", "Excel workbook", "attach to claim"], ["csv", "CSV", "power cycles"], ["json", "JSON", "full result"]]
-              .map(([f, l, s]) => `<a href="/api/cases/${encodeURIComponent(c.id)}/export.${f}?tz=${tzOffset()}" download>${l}<small>${s}</small></a>`).join("")}
+              .map(([f, l, s]) => `<a data-f="${f}" download>${l}<small>${s}</small></a>`).join("")}
+            <label class="exp-names" title="The accounts of the people who shut the PC down. Hidden by default: a report leaves this PC, and a claim needs to know that a user did it, not who. Windows' own accounts are always shown."><input type="checkbox" id="expNames"> Include account names</label>
           </div></div>
         <button class="btn danger" id="delBtn" title="Delete case">${ICON.trash}</button>
       </div>
@@ -312,8 +315,16 @@ function renderCase() {
     <div class="tabs">${tabs.map(([k, l, b, w]) => `<button class="tab ${S.tab === k ? "active" : ""}" data-tab="${k}">${l}${b != null ? ` <span class="badge ${w ? "warn" : ""}">${b}</span>` : ""}</button>`).join("")}</div>
     <div id="tabBody"></div>`;
   $$(".tab").forEach((t) => (t.onclick = () => { S.tab = t.dataset.tab; renderCase(); }));
-  const menu = $("#expMenu"); menu.querySelector(".btn").onclick = (e) => { e.stopPropagation(); menu.classList.toggle("open"); };
-  document.addEventListener("click", () => menu.classList.remove("open"), { once: true });
+  const menu = $("#expMenu"), names = $("#expNames");
+  menu.querySelector(".btn").onclick = (e) => {
+    e.stopPropagation();
+    if (menu.classList.toggle("open")) document.addEventListener("click", () => menu.classList.remove("open"), { once: true });
+  };
+  /* exports leave people's account names out unless asked for; the choice is kept in this browser */
+  const exportLinks = () => $$("a[data-f]", menu).forEach((a) => (a.href = `/api/cases/${encodeURIComponent(c.id)}/export.${a.dataset.f}?tz=${tzOffset()}${names.checked ? "&names=1" : ""}`));
+  names.checked = store.get("expNames", false); exportLinks();
+  names.onchange = () => { store.set("expNames", names.checked); exportLinks(); };
+  menu.querySelector(".exp-names").onclick = (e) => e.stopPropagation();   // ticking it keeps the menu open
   const del = $("#delBtn");
   del.onclick = async () => {
     if (!del.dataset.armed) { del.dataset.armed = "1"; del.innerHTML = `${ICON.trash} Confirm delete`; setTimeout(() => { if (del.isConnected) { delete del.dataset.armed; del.innerHTML = ICON.trash; } }, 3000); return; }
@@ -466,13 +477,14 @@ function tabCycles() {
 function cycleRow(it) {
   const warn = it.flags.filter((x) => x.severity === "warn").length;
   const hl = isHl(it.drive?.highlight) ? hlChip({ ...it.drive, highlight_label: it.drive.highlight === "yes" ? HV() : `${HV()}?` }) : "";
+  const init = it.software?.initiator, acc = init?.account_kind === "user" ? init.user : "";   // a person's account; Windows' own is in the chip
   return `<tr class="click ${S.selected === it.id ? "sel" : ""} ${hl ? "samrow" : ""}" data-id="${it.id}">
     <td class="mono">${it.id}</td><td style="white-space:nowrap">${fmt(it.time)}</td><td>${chip(it.type)}</td>
     <td>${esc(it.subtype)}${it.wake_source ? `<div class="muted small">wake: ${esc(it.wake_source)}</div>` : ""}</td>
     <td style="white-space:nowrap">${esc(it.type === "sleep" ? it.duration : it.gap)}</td>
     <td>${confBar(it.confidence)}</td><td><span class="chips">${stateChip(it.drive?.state)}${hl}</span></td>
     <td>${it.type === "sleep" ? '<span class="muted">—</span>' : causeChip(it.drive)}</td>
-    <td>${it.type === "sleep" || !it.software ? '<span class="muted">—</span>' : `${swChip(it.software)}${SW_CLS[it.software.strength] ? `<div class="muted small">${esc(it.software.strength_label + swConf(it.software))}</div>` : ""}`}</td>
+    <td>${it.type === "sleep" || !it.software ? '<span class="muted">—</span>' : `${swChip(it.software)}${SW_CLS[it.software.strength] ? `<div class="muted small">${esc(it.software.strength_label + swConf(it.software) + (acc ? ` · ${acc}` : ""))}</div>` : ""}`}</td>
     <td>${warn ? `<span class="flagdot">${ICON.warn}${warn}</span>` : it.flags.length ? `<span class="muted small">${it.flags.length} note${it.flags.length > 1 ? "s" : ""}</span>` : ""}</td></tr>`;
 }
 function drawCycleRows() {
@@ -540,8 +552,8 @@ function openDetail(id) {
         : '<div class="note" style="margin-bottom:10px">Re-run the analysis to get the drive assessment for this case.</div>'}
       ${driveWin(d.before, true)}${driveWin(d.after, false)}</div>`;
   const sw = it.software, init = sw?.initiator;
-  const initKv = init ? [["Requested by", init.process || "—"], ["Path", init.path], ["Reason", init.reason_text],
-    ["Type", init.type], ["On behalf of", init.user], ["Comment", init.comment], ["Logged at", fmt(init.time)]].filter(([, v]) => v) : [];
+  const initKv = init ? [["Requested by", init.process || "—"], ["Account", accountText(init)], ["Path", init.path], ["Reason", init.reason_text],
+    ["Type", init.type], ["Comment", init.comment], ["Logged at", fmt(init.time)]].filter(([, v]) => v) : [];
   const swSec = `<div class="sec"><h4>Apps, updates &amp; services</h4>
       ${sw ? `<div class="assess">
         ${isSleep ? "" : `<div class="a-row"><span>What triggered it?</span><span class="chips">${swChip(sw)}<span class="muted small" style="font-weight:400">${esc(sw.strength_label + swConf(sw))}</span></span></div>`}
