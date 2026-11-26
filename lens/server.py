@@ -17,7 +17,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, catalog, demo, engine, parser, report, store
+from . import __version__, catalog, demo, engine, parser, reference, report, store
 
 WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
 _lock = threading.Lock()
@@ -51,7 +51,7 @@ def run_analysis(paths, name=None, settings=None):
 
 def _warm(case_id: str):
     try:
-        store.event_index(case_id)
+        store.warm(case_id)
     except Exception:   # the request that needs it reports the error
         pass
 
@@ -118,19 +118,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "version": __version__})
             if parts[1:] == ["config"]:
                 return self._json(catalog.load_config())
+            if parts[1:] == ["reference"]:
+                return self._reference()
             if parts[1:] == ["cases"]:
                 return self._json(store.list_cases())
             if len(parts) == 3 and parts[1] == "cases":
                 body = store.result_bytes(parts[2])
                 if body is None:
                     return self._err("case not found", 404)
-                # read its events in the background: the timeline line needs them next
+                # open its events in the background: the timeline line and the References tab need them next
                 threading.Thread(target=_warm, args=(parts[2],), daemon=True).start()
                 return self._send(200, body)
             if len(parts) == 4 and parts[1] == "cases" and parts[3] == "events":
                 return self._events(parts[2], q)
             if len(parts) == 4 and parts[1] == "cases" and parts[3] == "index":
-                return self._json(store.event_index(parts[2]))
+                return self._send(200, store.index_bytes(parts[2]))
+            if len(parts) == 4 and parts[1] == "cases" and parts[3] == "ids":
+                return self._ids(parts[2])
             if len(parts) == 4 and parts[1] == "cases" and parts[3] == "rows":
                 if "ids" in q:   # a range: the events it lists, wherever they are
                     return self._json(store.event_rows_at(parts[2], [int(i) for i in q["ids"].split(",") if i][:4096]))
@@ -184,32 +188,28 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, fh.read(), ctype)
 
     def _events(self, cid, q):
-        evs = store.load_events(cid)
         if "around" in q:
-            i = int(q["around"])
-            n = int(q.get("n", 25))
-            sel = evs[max(0, i - n): i + n + 1]
-        else:
-            # tag=software|storage: only events with that tag, without their data; last=1: the last `limit` of them
-            f, t, tag, last = q.get("from"), q.get("to"), q.get("tag"), bool(q.get("last"))
-            tag = tag if tag in ("software", "storage") else None
-            text = (q.get("q") or "").lower()
-            limit = int(q.get("limit", 500))
-            sel = []
-            for e in evs:
-                if f and e["time"] < f:
-                    continue
-                if t and e["time"] > t:
-                    break
-                if tag and not e.get(tag):
-                    continue
-                if text and text not in f"{e['provider']} {e['eid']} {e['channel']} {e.get('msg', '')} {json.dumps(e.get('data', {}))}".lower():
-                    continue
-                sel.append({**{k: e[k] for k in ("idx", "time", "provider", "eid", "channel")}, **e[tag]} if tag else e)
-                if not last and len(sel) >= limit:
-                    break
-            sel = sel[max(0, len(sel) - limit):] if last else sel
-        return self._json(sel)
+            return self._json(store.events_around(cid, int(q["around"]), int(q.get("n", 25))))
+        # tag=software|storage: only events with that tag, without their data; last=1: the last `limit` of them
+        tag = q.get("tag") if q.get("tag") in ("software", "storage") else None
+        return self._json(store.find_events(cid, q.get("from"), q.get("to"), tag, q.get("q") or "",
+                                            int(q.get("limit", 500)), bool(q.get("last"))))
+
+    def _reference(self):
+        """What each event ID means, with what LENS uses it for."""
+        cfg = catalog.load_config()
+        known = reference.uses(cfg)
+        rows = []
+        for k, provs, eid, title, text in reference.table(cfg):
+            first = int(str(eid).split("-")[0])
+            rows.append([k, provs, eid, title, text, reference.use_of(provs.split("|")[0], first, cfg, known)])
+        self._json(rows)
+
+    def _ids(self, cid):
+        """The event IDs in a case, each with what LENS uses it for."""
+        cfg = catalog.load_config()
+        known = reference.uses(cfg)
+        self._json([{**s, "u": reference.use_of(s["p"], s["e"], cfg, known)} for s in store.event_ids(cid)])
 
     def _export(self, cid, fmt, tz, names=False):
         r = store.load_result(cid)

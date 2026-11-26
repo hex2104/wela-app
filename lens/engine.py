@@ -30,9 +30,9 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-from . import __version__
+from . import __version__, reference
 from .catalog import DEFAULTS
-from .models import Event, iso, parse_time
+from .models import Event, iso, no_gc, parse_time
 
 STATE_RANK = {"missing": 5, "reset": 4, "error": 3, "slow": 2, "warning": 1, "info": 0, "healthy": 0}
 BOOT_SIGNALS = {"BOOT_OS_START", "BOOT_LOG_START", "BOOT_OS_VERSION", "BOOT_TYPE"}
@@ -49,7 +49,7 @@ SCSI_OPS = {0x00: "TEST UNIT READY", 0x03: "REQUEST SENSE", 0x12: "INQUIRY", 0x1
             0x88: "READ(16)", 0x8A: "WRITE(16)", 0x91: "SYNCHRONIZE CACHE(16)", 0x9E: "SERVICE ACTION IN(16)",
             0xA0: "REPORT LUNS"}
 # event data keys shown first in the per-event field summary
-FIELD_HINTS = ("opcode", "status", "sense", "asc", "error", "reason", "latency", "duration", "timeout", "reset")
+FIELD_HINTS = ("description", "opcode", "status", "sense", "asc", "error", "reason", "latency", "duration", "timeout", "reset")
 
 # ---- drive identity
 HL_LABELS = {"yes": "{v} drive", "probably": "Probably the {v} drive", "no": "Another drive",
@@ -275,6 +275,7 @@ class Analyzer:
         hints = [h.lower() for h in self.cfg["storage_provider_hints"]]
         sw = {(prov.lower(), int(eid)): (label, group, kind)
               for prov, eid, label, group, kind in self.cfg.get("software_events", [])}
+        named = reference.titles(self.cfg)   # a storage event with no rule of its own is named by what its ID means
         for e in self.events:
             p = e.provider.lower()
             e.signal = sig.get((p, e.eid))
@@ -282,11 +283,11 @@ class Analyzer:
                 e.software = self._software_tag(e, *sw[(p, e.eid)])
             hit = (e.level in (0, 4) and normal.get((p, e.eid))) or exact.get((p, e.eid))
             if hit is None and p in wild:
-                hit = (f"{wild[p][0]} {e.eid}", wild[p][1])
+                hit = (named.get((p, e.eid)) or f"{wild[p][0]} {e.eid}", wild[p][1])
             if hit is None and channel_kind(e.channel) == "storport":
-                hit = (f"Storport event {e.eid}", "auto")
+                hit = (named.get((p, e.eid)) or f"Storport event {e.eid}", "auto")
             if hit is None and any(h in p for h in hints):
-                hit = (f"{e.provider} {e.eid}", "auto")
+                hit = (named.get((p, e.eid)) or f"{e.provider} {e.eid}", "auto")
             if hit:
                 label, state = hit
                 if state == "auto":
@@ -379,6 +380,13 @@ class Analyzer:
                     clock_back.append({"channel": ch, "rid": b.rid, "time": iso(b.time),
                                        "back_by_s": round(a.ts - b.ts)})
         self.record_gaps = sorted(gaps, key=lambda g: g["start_ts"])
+        # the System log's gaps by start, with the latest end so far: an overlap check reads only the gaps near it
+        self.sys_gaps = [g for g in self.record_gaps if channel_kind(g["channel"]) == "system"]
+        self.sys_gap_starts = [g["start_ts"] for g in self.sys_gaps]
+        self.sys_gap_reach, far = [], float("-inf")
+        for g in self.sys_gaps:
+            far = max(far, g["end_ts"])
+            self.sys_gap_reach.append(far)
 
         clears = [{"time": iso(e.time), "channel": e.channel, "idx": e.idx, "eid": e.eid,
                    "detail": e.data.get("Channel") or e.data.get("SubjectUserName") or ""}
@@ -396,8 +404,13 @@ class Analyzer:
         return any(c["kind"] == kind and c["start_ts"] <= t1 and c["end_ts"] >= t0 for c in self.channels)
 
     def _gap_overlaps(self, t0: float, t1: float) -> List[dict]:
-        return [g for g in self.record_gaps if channel_kind(g["channel"]) == "system"
-                and g["start_ts"] <= t1 and g["end_ts"] >= t0]
+        """System-log record gaps that overlap t0 .. t1, in time order."""
+        out, i = [], bisect.bisect_right(self.sys_gap_starts, t1) - 1
+        while i >= 0 and self.sys_gap_reach[i] >= t0:   # no gap before i reaches t0 once the latest end so far does not
+            if self.sys_gaps[i]["end_ts"] >= t0:
+                out.append(self.sys_gaps[i])
+            i -= 1
+        return out[::-1]
 
     # ------------------------------------------------------------------ 3. boots
     def find_boots(self):
@@ -518,22 +531,35 @@ class Analyzer:
                 return int(m.group(1))
         return None
 
+    def _index_inventory(self):
+        """The inventory records by boot and by disk number, so each lookup reads only its own few."""
+        self.inv_by = defaultdict(list)        # (disk number, boot session) -> records, in time order
+        self.inv_disk = defaultdict(dict)      # disk number -> drives seen with it
+        self.inv_session = defaultdict(list)   # boot session -> records
+        for r in self.inv_recs:
+            self.inv_by[(r["disk"], r["session"])].append(r)
+            self.inv_disk[r["disk"]][id(r["drive"])] = r["drive"]
+            self.inv_session[r["session"]].append(r)
+        self._in_boot = {}
+
     def _disk_at(self, n: int, ts: float, k: int) -> Optional[dict]:
         """Drive that had disk number n at time ts: the inventory of that boot, else an unambiguous one."""
-        recs = [r for r in self.inv_recs if r["disk"] == n]
-        same = [r for r in recs if r["session"] == k]
+        same = self.inv_by.get((n, k))
         if same:
-            before = [r for r in same if r["ts"] <= ts]
-            return (before[-1] if before else same[0])["drive"]
-        drives = {id(r["drive"]): r["drive"] for r in recs}
+            i = bisect.bisect_right([r["ts"] for r in same], ts)
+            return (same[i - 1] if i else same[0])["drive"]
+        drives = self.inv_disk.get(n, {})
         return next(iter(drives.values())) if len(drives) == 1 else None
 
     def _drives_in(self, k: int) -> Tuple[List[dict], bool]:
         """Drives present in boot session k (from its boot-time inventory), else every drive in the logs."""
-        recs = [r for r in self.inv_recs if r["session"] == k]
-        if k >= 0 and any(r["ts"] - self.boot_ts[k] <= self.s["boot_cluster_s"] for r in recs):
-            return list({id(r["drive"]): r["drive"] for r in recs}.values()), True
-        return self.drives, False
+        if k not in self._in_boot:
+            recs = self.inv_session.get(k, [])
+            if k >= 0 and any(r["ts"] - self.boot_ts[k] <= self.s["boot_cluster_s"] for r in recs):
+                self._in_boot[k] = (list({id(r["drive"]): r["drive"] for r in recs}.values()), True)
+            else:
+                self._in_boot[k] = (self.drives, False)
+        return self._in_boot[k]
 
     def identify(self):
         """Tie every storage event to a drive and flag the highlighted vendor's drives.
@@ -559,6 +585,7 @@ class Analyzer:
                 if inv:
                     self.inv_recs.append({"ts": e.ts, "session": self._session_of(e.ts), "disk": ident["disk"],
                                           "drive": ident["drive"]})
+        self._index_inventory()
         for e in self.storage:
             ident, n, sure, basis, dev = named.get(e.idx), None, True, "", None
             if ident:
@@ -1499,4 +1526,5 @@ class Analyzer:
 
 
 def analyze(events: List[Event], cfg: dict = None, sources: List[dict] = None) -> dict:
-    return Analyzer(events, cfg, sources).run()
+    with no_gc():
+        return Analyzer(events, cfg, sources).run()

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lens import catalog, demo, engine, parser, report, store  # noqa: E402
+from lens import catalog, demo, engine, parser, reference, report, store  # noqa: E402
 from lens.models import Event, parse_time  # noqa: E402
 
 
@@ -614,7 +614,6 @@ class TimelineLogs(unittest.TestCase):
         warm = store.event_index("tl")   # kept from the analysis
         with store._lock:
             store._cache.clear()
-            store._index.clear()
         ix = store.event_index("tl")     # read back from disk, as after a restart
         self.assertEqual(ix, warm)
         ms, t = [], ix["t0"]
@@ -643,6 +642,148 @@ class TimelineLogs(unittest.TestCase):
         self.assertEqual(store.event_rows("tl", len(self.events), len(self.events) + 9), [])
         # a range's lists: rows by index, wherever they are
         self.assertEqual([r["idx"] for r in store.event_rows_at("tl", [i505, 3, len(self.events), -1])], [i505, 3])
+        # an event LENS has no rule for is named by what its ID means; a driver's own event by what the driver said
+        i7036 = next(e.idx for e in self.events if e.eid == 7036)
+        self.assertEqual(store.event_rows("tl", i7036, i7036 + 1)[0]["label"], "Service started or stopped")
+        i527 = next(e.idx for e in self.events if e.eid == 527)
+        r527 = store.event_rows("tl", i527, i527 + 1)[0]
+        self.assertEqual((r527["label"], r527["text"]), ("Miniport event (warning)", "Command timed out (demo)"))
+
+    def test_blocks_give_back_every_event_as_saved(self):
+        n = len(self.events)
+        for i in sorted({0, store.BLOCK - 1, store.BLOCK, store.BLOCK + 1, n // 2, n - 1}):
+            self.assertEqual(store.events_around("tl", i, 0), [json.loads(json.dumps(self.events[i].to_dict()))])
+        whole = store.events_around("tl", n // 2, n)     # across every block, clipped at both ends
+        self.assertEqual([e["idx"] for e in whole], list(range(n)))
+
+    def test_find_events_by_time_and_tag(self):
+        sw = [e for e in self.events if e.software]
+        a, b = sw[1], sw[-2]
+        got = store.find_events("tl", a.to_dict()["time"], b.to_dict()["time"], "software", limit=5000)
+        self.assertEqual([e["idx"] for e in got], [e.idx for e in sw if a.ts <= e.ts <= b.ts])
+        self.assertEqual(got[0]["label"], a.software["label"])             # short: the tag, without the data
+        last = store.find_events("tl", None, None, "software", limit=3, last=True)
+        self.assertEqual([e["idx"] for e in last], [e.idx for e in sw[-3:]])
+        self.assertTrue(all("demo.exe" in json.dumps(e) for e in store.find_events("tl", text="DEMO.EXE")))
+
+    def test_event_ids_count_each_id_once(self):
+        ids = {(s["k"], s["p"], s["e"]): s for s in store.event_ids("tl")}
+        kinds = {"system": "s", "application": "a", "storport": "p"}
+        want = {}
+        for e in self.events:
+            want.setdefault((kinds.get(engine.channel_kind(e.channel), "o"), e.provider, e.eid), []).append(e)
+        self.assertEqual(set(ids), set(want))
+        for key, evs in want.items():
+            s = ids[key]
+            self.assertEqual((s["n"], s["er"], s["wa"], s["f"], s["l"]),
+                             (len(evs), sum(e.level in (1, 2) for e in evs), sum(e.level == 3 for e in evs), evs[0].idx, evs[-1].idx))
+        # what the worst of them says: an unexpected shutdown's own words; the driver's description, counted
+        self.assertTrue(ids[("s", "EventLog", 6008)]["m"].startswith("The previous system shutdown at"))
+        self.assertEqual(ids[("p", "Microsoft-Windows-StorPort", 527)]["said"], [["Command timed out (demo)", 1]])
+        self.assertNotIn("said", ids[("p", "Microsoft-Windows-StorPort", 505)])
+
+    def test_case_saved_by_an_earlier_version_is_read(self):
+        """One gzip stream and no index: rewritten as blocks with its index the first time it is opened."""
+        d = os.path.join(store.ROOT, "old")
+        os.makedirs(d)
+        rows = [e.to_dict() for e in self.events]
+        import gzip
+        with gzip.open(os.path.join(d, "events.jsonl.gz"), "wt", encoding="utf-8") as fh:
+            for r in rows:
+                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+        self.assertEqual(store.event_index("old"), store.event_index("tl"))
+        self.assertTrue(os.path.isfile(os.path.join(d, "events.idx.json")))
+        self.assertEqual(store.event_ids("old"), store.event_ids("tl"))
+        self.assertEqual(store.event_rows("old", 0, 300), store.event_rows("tl", 0, 300))
+        with gzip.open(os.path.join(d, "events.jsonl.gz"), "rt", encoding="utf-8") as fh:   # still one gzip file to any reader
+            self.assertEqual([json.loads(line) for line in fh], json.loads(json.dumps(rows)))
+        with store._lock:
+            store._cache.clear()
+        self.assertEqual(store.event_rows("old", 290, 300), store.event_rows("tl", 290, 300))   # its index, read back
+
+
+class References(unittest.TestCase):
+    """What each event ID means: the References tab, and the meaning shown when an ID is clicked."""
+
+    def test_every_event_id_lens_uses_has_a_meaning(self):
+        cfg = catalog.load_config()
+        named = reference.titles(cfg)
+        ids = [(p, e) for pairs in cfg["signals"].values() for p, e in pairs]
+        ids += [(p, e) for p, e, *_ in cfg["storage_events"] if e != "*"] + [(p, e) for p, e, *_ in cfg["software_events"]]
+        self.assertEqual([x for x in ids if (x[0].lower(), int(x[1])) not in named], [])
+        for k, provs, eid, title, text in reference.REFERENCE:
+            self.assertIn(k, "sap")
+            self.assertTrue(title and len(title) <= 40 and text.endswith((".", ")")), (provs, eid))
+
+    def test_runs_of_ids_and_several_drivers(self):
+        named = reference.titles()
+        self.assertEqual(named[("microsoft-windows-storport", 527)], "Miniport event (warning)")
+        self.assertEqual(named[("microsoft-windows-storport", 567)], "Miniport event (information)")
+        self.assertEqual(named[("storahci", 129)], named[("stornvme", 129)])
+        self.assertNotIn(("microsoft-windows-storport", 566), named)
+
+    def test_team_adds_and_replaces_lines(self):
+        cfg = {**catalog.load_config(), "references": [["s", "EventLog", 6005, "Log service up", "Ours."],
+                                                       ["a", "Our App", "10-11", "Our event", "Ours too."], ["bad"]]}
+        rows = reference.table(cfg)
+        self.assertEqual([r[3] for r in rows if r[1] == "EventLog" and r[2] == 6005], ["Log service up"])
+        self.assertEqual(reference.titles(cfg)[("our app", 11)], "Our event")
+        self.assertEqual(len(rows), len(reference.REFERENCE) + 1)
+
+    def test_what_lens_uses_an_id_for(self):
+        cfg = catalog.load_config()
+        self.assertEqual(reference.use_of(KP, 41, cfg), "Power cycle evidence: Unclean shutdown reported")
+        self.assertIn("Reset to device (reset)", reference.use_of("storahci", 129, cfg))
+        self.assertIn("normal activity", reference.use_of("Microsoft-Windows-Ntfs", 98, cfg))
+        self.assertTrue(reference.use_of("Microsoft-Windows-StorPort", 999, cfg).startswith("Drive event"))
+        self.assertEqual(reference.use_of("Service Control Manager", 7036, cfg), "")
+
+    def test_storage_event_without_a_rule_is_named_by_its_meaning(self):
+        r = run(hard_cycle([storport("2026-01-01T09:59:30Z", eid=527), storport("2026-01-01T09:59:31Z", eid=999)]))
+        self.assertEqual([x["label"] for x in r["storage_events"]], ["Miniport event (warning)", "Storport event 999"])
+
+
+class XmlInPieces(unittest.TestCase):
+    """XML is read a piece at a time: the events must not depend on where the pieces break."""
+
+    @classmethod
+    def setUpClass(cls):
+        folder = tempfile.mkdtemp()
+        demo.build(folder)
+        with open(os.path.join(folder, "System.xml"), encoding="utf-8") as fh:
+            cls.text = fh.read()
+
+    def test_same_events_whatever_the_piece_size(self):
+        whole = [e.to_dict() for e in parser.parse_xml_text(self.text, "System.xml")]
+        for size in (1, 97, 4096):
+            pieces = (self.text[i:i + size] for i in range(0, len(self.text), size))
+            self.assertEqual([e.to_dict() for e in parser._parse_pieces(pieces, "x/System.xml")], whole)
+
+    def test_byte_order_mark_declaration_and_no_root(self):
+        body = self.text.split("<Events>", 1)[1].rsplit("</Events>", 1)[0]
+        n = len(parser.parse_xml_text(self.text, "a"))
+        self.assertEqual(len(parser.parse_xml_text("\ufeff<?xml version='1.0' encoding='utf-8'?>\n" + body, "a")), n)
+        path = os.path.join(tempfile.mkdtemp(), "Saved.xml")
+        with open(path, "w", encoding="utf-8-sig") as fh:
+            fh.write('<?xml version="1.0" encoding="utf-8"?>' + self.text)
+        self.assertEqual(len(parser.parse_xml_file(path)), n)
+        self.assertEqual(parser.parse_xml_text("", "a"), [])
+
+    def test_text_that_stops_part_way(self):
+        cut = self.text[:self.text.index("</Event>", 20000) + 300]
+        got = parser.parse_xml_text(cut, "a", partial=True)
+        self.assertEqual(len(got), cut.count("</Event>"))
+        with self.assertRaises(Exception):
+            parser.parse_xml_text(cut, "a")
+
+    def test_times_read_without_strptime_match(self):
+        for t in ("2026-09-03T09:02:17.5000000Z", "2026-09-03T09:02:17Z", "2026-09-03 09:02:17.123Z", "2026-12-31T23:59:59.9999999Z"):
+            slow = datetime.strptime(t.replace(" ", "T")[:26].rstrip("Z").ljust(26, "0") if "." in t else t.rstrip("Z"),
+                                     "%Y-%m-%dT%H:%M:%S.%f" if "." in t else "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+            self.assertEqual(parse_time(t), slow)
+        self.assertEqual(parse_time("2026-09-03T09:02:17.500+05:30"), datetime(2026, 9, 3, 3, 32, 17, 500000, tzinfo=timezone.utc))
+        with self.assertRaises(ValueError):
+            parse_time("2026-13-03T09:02:17Z")
 
 
 class Robustness(unittest.TestCase):

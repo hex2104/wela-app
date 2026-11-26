@@ -1,4 +1,11 @@
-"""Case storage on local disk: cases/<id>/result.json + events.jsonl.gz"""
+"""Case storage on local disk: cases/<id>/result.json, events.jsonl.gz, index.json and events.idx.json.
+
+events.jsonl.gz holds the events in time order, one per line, compressed as blocks of BLOCK lines - each block a gzip
+member, so the file is still one ordinary gzip file to any reader. events.idx.json says where each block starts and
+lists the event IDs in the case; index.json is every event's time and log for the timeline. An open case keeps only
+the compressed file, those block starts and times, and the last blocks it read: a request decodes just the blocks
+it needs, so memory stays a small fraction of the events' size however big the case.
+"""
 from __future__ import annotations
 
 import gzip
@@ -7,14 +14,21 @@ import os
 import re
 import shutil
 import threading
+import zlib
+from array import array
+from bisect import bisect_left, bisect_right
+from collections import Counter, OrderedDict
 from datetime import date, datetime
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
-from . import catalog
+from . import catalog, reference
 from .engine import _fields, channel_kind
-from .models import Event, parse_time
+from .models import Event, no_gc, parse_time
 
 ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cases")
+BLOCK = 256        # events per compressed block
+KEEP = 24          # decoded blocks kept per open case (6,144 events)
+FORMAT = 2         # events.idx.json layout
 
 
 def _dir(case_id: str) -> str:
@@ -33,14 +47,12 @@ def save(case_id: str, result: dict, events: List[Event]) -> None:
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "result.json"), "w", encoding="utf-8") as fh:
         json.dump(result, fh, ensure_ascii=False)
-    rows = [e.to_dict() for e in events]
-    with gzip.open(os.path.join(d, "events.jsonl.gz"), "wt", encoding="utf-8") as fh:
-        for r in rows:
-            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-    with _lock:   # the case opens next: keep its events instead of reading them back
+    with no_gc():
+        case = _write(d, (e.to_dict() for e in events))   # one event at a time: never a second copy of them all
+    _commit(d)
+    with _lock:   # the case opens next: keep it instead of reading it back
         _cache.clear()
-        _index.clear()
-        _cache[case_id] = rows
+        _cache[case_id] = case
 
 
 def result_bytes(case_id: str) -> Optional[bytes]:
@@ -60,29 +72,91 @@ def load_result(case_id: str) -> Optional[dict]:
         return json.load(fh)
 
 
-# the open case's events, one case at a time; the lock makes a second request wait for the first load
+# ------------------------------------------------------------------ the open case
+# one case at a time; the lock makes a second request wait for the first one's read
 _lock = threading.RLock()
 _cache = {}
-_index = {}
 _labels = {}
+_titles = {}
+_KIND = {"system": "s", "application": "a", "storport": "p"}
+_ENC = json.JSONEncoder(ensure_ascii=False, separators=(",", ":")).encode
 
 
-def load_events(case_id: str) -> List[dict]:
-    with _lock:
-        if case_id in _cache:
-            return _cache[case_id]
-        p = os.path.join(_dir(case_id), "events.jsonl.gz")
+class _Case:
+    """An open case: its compressed events, where each block starts, every event's time (ms) and its event IDs."""
+    __slots__ = ("blob", "off", "ms", "ids", "blocks")
+
+    def __init__(self, blob: bytes, off: List[int], ms: array, ids: list):
+        self.blob, self.off, self.ms, self.ids = blob, off, ms, ids
+        self.blocks = OrderedDict()   # block number -> its events, the last KEEP read
+
+    def __len__(self):
+        return len(self.ms)
+
+    def block(self, b: int) -> List[dict]:
+        evs = self.blocks.get(b)
+        if evs is None:
+            raw = zlib.decompress(self.blob[self.off[b]:self.off[b + 1]], 31)
+            evs = json.loads(b"[" + raw.rstrip(b"\n").replace(b"\n", b",") + b"]")   # one line per event
+            self.blocks[b] = evs
+            if len(self.blocks) > KEEP:
+                self.blocks.popitem(last=False)
+        else:
+            self.blocks.move_to_end(b)
+        return evs
+
+    def slice(self, i0: int, i1: int) -> List[dict]:
+        """Events i0 .. i1-1."""
+        i0, i1 = max(0, i0), min(len(self), i1)
         out = []
-        if os.path.isfile(p):
-            with gzip.open(p, "rt", encoding="utf-8") as fh:
-                out = [json.loads(line) for line in fh if line.strip()]
-        _cache.clear()
-        _index.clear()
-        _cache[case_id] = out
+        for b in range(i0 // BLOCK, (i1 - 1) // BLOCK + 1) if i1 > i0 else ():
+            out += self.block(b)[max(0, i0 - b * BLOCK):i1 - b * BLOCK]
         return out
 
 
-_KIND = {"system": "s", "application": "a", "storport": "p"}
+def _case(case_id: str) -> _Case:
+    with _lock:
+        c = _cache.get(case_id)
+        if c is None:
+            c = _read(_dir(case_id))
+            _cache.clear()
+            _cache[case_id] = c
+        return c
+
+
+def _paths(d: str):
+    return (os.path.join(d, "events.jsonl.gz"), os.path.join(d, "index.json"), os.path.join(d, "events.idx.json"))
+
+
+def _read(d: str) -> _Case:
+    ev, ix, meta = _paths(d)
+    if not os.path.isfile(ev):
+        return _Case(b"", [0], array("q"), [])
+    try:
+        with open(meta, "r", encoding="utf-8") as fh:
+            m = json.load(fh)
+        if m.get("v") != FORMAT or m.get("size") != os.path.getsize(ev):
+            raise ValueError("index out of date")
+        with open(ev, "rb") as fh:
+            blob = fh.read()
+        with open(ix, "r", encoding="utf-8") as fh:
+            t = json.load(fh)
+        return _Case(blob, m["off"], _times(t), m["ids"])
+    except (OSError, ValueError, KeyError):
+        pass
+    # saved by an earlier version as one gzip stream: write it as blocks with its index, once
+    with gzip.open(ev, "rt", encoding="utf-8") as fh, no_gc():
+        case = _write(d, (json.loads(line) for line in fh if line.strip()))
+    _commit(d)
+    return case
+
+
+def _times(ix: dict) -> array:
+    ms, t = array("q"), ix["t0"]
+    for step in ix["d"]:
+        t += step
+        ms.append(t)
+    return ms
 
 
 def _ms(t: str, days: dict) -> int:
@@ -95,44 +169,174 @@ def _ms(t: str, days: dict) -> int:
     return (((d * 24 + int(t[11:13])) * 60 + int(t[14:16])) * 60 + int(t[17:19])) * 1000 + int(t[20:23])
 
 
+def _write(d: str, rows: Iterable[dict]) -> _Case:
+    """Write events (dicts, in time order) as compressed blocks, with the timeline index and the event IDs in the case,
+    to .tmp files that _commit puts in place."""
+    ev, ix, meta = _paths(d)
+    off, parts, lines, days, kinds = [0], [], [], {}, {}
+    ms, steps, letters, ids = array("q"), [], [], {}
+
+    def flush():
+        z = zlib.compressobj(6, zlib.DEFLATED, 31)          # a gzip member
+        part = z.compress(("\n".join(lines) + "\n").encode("utf-8")) + z.flush()
+        fh.write(part)
+        parts.append(part)
+        off.append(off[-1] + len(part))
+        lines.clear()
+
+    with open(ev + ".tmp", "wb") as fh:
+        for r in rows:
+            lines.append(_ENC(r))
+            t = _ms(r["time"], days)
+            steps.append(t - (ms[-1] if ms else t))
+            ms.append(t)
+            ch = r["channel"]
+            k = kinds.get(ch)
+            if k is None:
+                k = kinds[ch] = _KIND.get(channel_kind(ch), "o")
+            letters.append(k)
+            _count(ids, k, r)
+            if len(lines) == BLOCK:
+                flush()
+        if lines:
+            flush()
+    summary = [_summary(s) for s in ids.values()]
+    with open(ix + ".tmp", "w", encoding="utf-8") as fh:
+        json.dump({"t0": ms[0] if ms else 0, "d": steps, "k": "".join(letters)}, fh, separators=(",", ":"))
+    with open(meta + ".tmp", "w", encoding="utf-8") as fh:
+        json.dump({"v": FORMAT, "size": off[-1], "block": BLOCK, "off": off, "ids": summary}, fh,
+                  ensure_ascii=False, separators=(",", ":"))
+    return _Case(b"".join(parts), off, ms, summary)
+
+
+def _commit(d: str) -> None:
+    """Put the files _write made in place - the index last, so a half-done write is redone on the next open."""
+    for p in _paths(d):
+        os.replace(p + ".tmp", p)
+
+
+# ------------------------------------------------------------------ event IDs in the case
+_RANK = {1: 0, 2: 0, 3: 1}   # error, warning; anything else (information, verbose, always) after them
+
+
+def _count(ids: dict, k: str, r: dict) -> None:
+    """One event into its event ID's tally: how many, the worst level, first and last, what it says."""
+    key = (k, r["provider"], r["eid"])
+    s = ids.get(key)
+    if s is None:
+        s = ids[key] = {"k": k, "p": r["provider"], "e": r["eid"], "n": 0, "er": 0, "wa": 0, "f": r["idx"],
+                        "ft": r["time"], "m": "", "r": 3, "said": Counter()}
+    s["n"] += 1
+    rank = _RANK.get(r.get("level"), 2)
+    if rank == 0:
+        s["er"] += 1
+    elif rank == 1:
+        s["wa"] += 1
+    s["l"], s["lt"] = r["idx"], r["time"]
+    msg = r.get("msg")
+    if msg and rank < s["r"]:   # what the worst of them says
+        s["m"], s["r"] = msg[:400], rank
+    said = str((r.get("data") or {}).get("MiniportEventDescription") or "").strip()
+    if said:   # Storport's miniport events: what the driver says happened
+        s["said"][said[:120]] += 1
+
+
+def _summary(s: dict) -> dict:
+    said = s.pop("said")
+    s.pop("r")
+    if said:
+        s["said"] = said.most_common(6)
+        s["kinds"] = len(said)
+    return s
+
+
+def warm(case_id: str) -> None:
+    """Open the case now - the timeline and the References tab need it next."""
+    _case(case_id)
+
+
+def event_ids(case_id: str) -> List[dict]:
+    """Every event ID in the case, once per log and provider: how many (errors, warnings), first and last event, what
+    the worst of them says (its message) and, for Storport's miniport events, what the driver said, by count."""
+    return _case(case_id).ids
+
+
+# ------------------------------------------------------------------ reading events
 def event_index(case_id: str) -> dict:
     """Every event's time and log, in time order, for the timeline cursor: t0 (ms) plus the step to each next
     event (ms), and one letter per event - s System, a Application, p Storport, o any other log."""
-    with _lock:
-        if case_id not in _index:
-            evs, days, kinds = load_events(case_id), {}, {}
-            ms = [_ms(e["time"], days) for e in evs]
-            for e in evs:
-                if e["channel"] not in kinds:
-                    kinds[e["channel"]] = _KIND.get(channel_kind(e["channel"]), "o")
-            t0 = ms[0] if ms else 0
-            _index[case_id] = {"t0": t0, "d": [b - a for a, b in zip([t0] + ms, ms)],
-                               "k": "".join(kinds[e["channel"]] for e in evs)}
-        return _index[case_id]
+    return json.loads(index_bytes(case_id))
+
+
+def index_bytes(case_id: str) -> bytes:
+    """The timeline index as stored - JSON already."""
+    d = _dir(case_id)
+    _case(case_id)   # an earlier version's case gets its index here
+    try:
+        with open(_paths(d)[1], "rb") as fh:
+            return fh.read()
+    except OSError:
+        return b'{"t0":0,"d":[],"k":""}'
 
 
 def event_rows(case_id: str, i0: int, i1: int) -> List[dict]:
     """Events i0 .. i1-1 (an event's index is its place in time order), short: what each one is and says - the app or
-    update it names, else the first line of its message (Event Viewer's General text), else its key fields."""
-    return [_row(e) for e in load_events(case_id)[max(0, i0):max(0, i1)]]
+    update it names, what the drive's driver said, else the first line of its message (Event Viewer's General text),
+    else its key fields."""
+    with _lock:
+        return [_row(e) for e in _case(case_id).slice(i0, i1)]
 
 
 def event_rows_at(case_id: str, ids: List[int]) -> List[dict]:
     """The same for the events with these indexes - a range's lists show events that can be far apart."""
-    evs = load_events(case_id)
-    return [_row(evs[i]) for i in ids if 0 <= i < len(evs)]
+    with _lock:
+        c = _case(case_id)
+        return [_row(c.block(i // BLOCK)[i % BLOCK]) for i in ids if 0 <= i < len(c)]
+
+
+def events_around(case_id: str, i: int, n: int) -> List[dict]:
+    """Event i with the n before and after it, in full."""
+    with _lock:
+        return _case(case_id).slice(i - n, i + n + 1)
+
+
+def find_events(case_id: str, start: str = None, end: str = None, tag: str = None, text: str = "",
+                limit: int = 500, last: bool = False) -> List[dict]:
+    """Events from start to end (ISO times), only those with this tag (software / storage: then short, without their
+    data), or whose text has these words; the first `limit` of them, or the last ones."""
+    text = (text or "").lower()
+    with _lock:
+        c, days = _case(case_id), {}
+        i0 = bisect_left(c.ms, _ms(start, days)) if start else 0
+        i1 = bisect_right(c.ms, _ms(end, days)) if end else len(c)
+        out = []
+        for b in range(i0 // BLOCK, (i1 - 1) // BLOCK + 1) if i1 > i0 else ():
+            for e in c.block(b)[max(0, i0 - b * BLOCK):i1 - b * BLOCK]:
+                if tag and not e.get(tag):
+                    continue
+                if text and text not in f"{e['provider']} {e['eid']} {e['channel']} {e.get('msg', '')} {json.dumps(e.get('data', {}))}".lower():
+                    continue
+                out.append({**{k: e[k] for k in ("idx", "time", "provider", "eid", "channel")}, **e[tag]} if tag else e)
+                if not last and len(out) >= limit:
+                    return out
+        return out[max(0, len(out) - limit):]
 
 
 def _row(e: dict) -> dict:
     if not _labels:   # "Unclean shutdown reported (Kernel-Power 41)": the row shows the ID and provider already
-        _labels.update({k: re.sub(r"\s*\([^()]*\)$", "", v) for k, v in catalog.load_config()["signal_labels"].items()})
+        cfg = catalog.load_config()
+        _labels.update({k: re.sub(r"\s*\([^()]*\)$", "", v) for k, v in cfg["signal_labels"].items()})
+        _titles.update(reference.titles(cfg))
     sw, st = e.get("software"), e.get("storage")
-    tag, msg = sw or st or {}, e.get("msg") or ""
+    tag, msg, data = sw or st or {}, e.get("msg") or "", e.get("data") or {}
     text = " · ".join(x for x in (tag.get("subject"), tag.get("detail")) if x) if sw else ""
+    said = str(data.get("MiniportEventDescription") or "").strip()
+    label = _labels.get(e.get("signal")) or tag.get("label") or ""
+    if not label or label.endswith(f" {e['eid']}"):   # no name, or a generic one ("Storport event 527"): the reference's
+        label = _titles.get((e["provider"].lower(), e["eid"])) or label
     row = {"idx": e["idx"], "time": e["time"], "eid": e["eid"], "level": e.get("level", 4),
-           "provider": e["provider"], "channel": e["channel"],
-           "label": _labels.get(e.get("signal")) or tag.get("label") or "",
-           "text": text or msg.split("\n", 1)[0][:300] or _fields(e.get("data") or {}, 6 if st else 4),
+           "provider": e["provider"], "channel": e["channel"], "label": label,
+           "text": text or said or msg.split("\n", 1)[0][:300] or _fields(data, 6 if st else 4),
            "state": tag.get("state") or ""}
     if msg:   # the start of it for the row's tooltip; the whole message comes with the event's data
         row["msg"] = msg[:600]
@@ -161,6 +365,5 @@ def delete(case_id: str) -> None:
     d = _dir(case_id)
     with _lock:
         _cache.pop(case_id, None)
-        _index.pop(case_id, None)
     if os.path.isdir(d):
         shutil.rmtree(d)

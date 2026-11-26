@@ -239,6 +239,12 @@ class Log:
                 self.add(t + timedelta(seconds=2 + 9 * i), "Microsoft-Windows-StorPort", 549, level=3, chan=STP,
                          data={"Port": "0", "Bus": "0", "Target": "0", "LUN": "0", "Opcode": "42", **SSD_STORPORT})
 
+    def miniport(self, t, eid, said, level=4):
+        """Storport's "The miniport logged an event": what happened is in the driver's description."""
+        self.add(t, "Microsoft-Windows-StorPort", eid, level=level, chan=STP, data={
+            "MiniportName": "stornvme", "MiniportEventId": "17", "MiniportEventDescription": said, "PortNumber": "0",
+            "AdapterGuid": "{DEMO}", "BootDevice": "true", "Parameter1Name": "Opcode", "Parameter1Value": "42"})
+
     def app(self, t, prov, eid, level=4, data=None):
         self.add(t, prov, eid, level=level, chan=APP, data=data)
 
@@ -279,6 +285,7 @@ def build(folder: str) -> list:
     L.clean_stop(_t(1, "18:30"))                                            # -> T2 full shutdown
     L.boot(_t(2, "08:55"))
     L.filler(_t(2, "08:55"), _t(2, "12:30"))
+    L.miniport(_t(2, "10:30"), 567, "Power state changed (demo)")
     L.sleep(_t(2, "12:30"), _t(2, "13:15"))                                 # S: full evidence
     L.filler(_t(2, "13:15"), _t(2, "17:00"))
     kb = "2026-09 Cumulative Update for Windows 11 (KB5099001) DEMO"
@@ -318,6 +325,7 @@ def build(folder: str) -> list:
         "0", "5", "BlueScreen", "Not available", "0", "9f", "3", "ffffdemo", "ffffdemo", "ffffdemo"])
     L.filler(_t(4, "10:17"), _t(4, "12:58"))
     L.drive_trouble(_t(4, "12:58"), resets=3, retries=2)
+    L.miniport(_t(4, "12:58", 25), 527, "Command timed out (demo)", level=3)   # the storage driver's own words
     L.app(_t(4, "12:58", 30), "Application Hang", 1002, level=2, data=["explorer.exe", "10.0.22621.1", "demo", "0"])
     L.app(_t(4, "12:58", 35), "Application Hang", 1002, level=2, data=["demo-editor.exe", "1.0", "demo", "0"])
     L.boot(_t(4, "13:03"))                                                  # -> T8 long-press

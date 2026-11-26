@@ -293,7 +293,7 @@ function renderCase() {
     integ.unreadable_files.length + integ.clock_backwards.length;
   const tabs = [["overview", "Overview"], ["timeline", "Timeline"], ["cycles", "Power cycles", c.items.length],
     ["drive", "Drive", c.storage_events.filter((e) => e.state !== "info").length], ["software", "Apps & updates", n.software_events],
-    ["quality", "Data quality", dq, dq > 0]];
+    ["quality", "Data quality", dq, dq > 0], ["refs", "References"]];
   $("#main").innerHTML = `
     <div class="case-head">
       <div><h1>${esc(c.case_name)}</h1>
@@ -331,7 +331,8 @@ function renderCase() {
     if (!del.dataset.armed) { del.dataset.armed = "1"; del.innerHTML = `${ICON.trash} Confirm delete`; setTimeout(() => { if (del.isConnected) { delete del.dataset.armed; del.innerHTML = ICON.trash; } }, 3000); return; }
     await api(`/api/cases/${encodeURIComponent(c.id)}`, { method: "DELETE" }); toast("Case deleted"); renderHome();
   };
-  ({ overview: tabOverview, timeline: tabTimeline, cycles: tabCycles, drive: tabDrive, software: tabSoftware, quality: tabQuality })[S.tab]();
+  closeRefPop();
+  ({ overview: tabOverview, timeline: tabTimeline, cycles: tabCycles, drive: tabDrive, software: tabSoftware, quality: tabQuality, refs: tabRefs })[S.tab]();
 }
 
 /* ------------------------------------------------------------------ overview */
@@ -506,7 +507,7 @@ function closeDrawer() {
 }
 /* one event in a before / after list; a click shows its data */
 const evRow = (e, body, chips, cls = "") => `<div class="wrow ${e.state === "info" ? "info" : cls}" data-idx="${e.idx}" title="Click for the full event data">
-    <span class="off mono" title="${fmt(e.time)}">${fmtOff(e.offset_s) || fmt(e.time).slice(11)}</span><span class="mono"><b>${e.eid}</b></span>
+    <span class="off mono" title="${fmt(e.time)}">${fmtOff(e.offset_s) || fmt(e.time).slice(11)}</span><span class="mono">${eidTag(e.eid, e.provider)}</span>
     <div class="wx"><div>${esc(e.label)} <span class="muted">· ${esc(e.provider.replace("Microsoft-Windows-", ""))}</span></div>${body}</div>
     <span class="chips">${chips}</span></div><pre class="data" hidden></pre>`;
 const driveRow = (e) => evRow(e, (e.fields ? `<div class="wf mono">${esc(e.fields)}</div>` : "") + devLine(e), devBadge(e) + stateChip(e.state), isHl(e.hl) ? "sam" : "");
@@ -579,7 +580,7 @@ function openDetail(id) {
         <div class="muted small" style="margin-top:6px">${nFound} signal(s) found${it.evidence_missing.length ? `, ${it.evidence_missing.length} expected signal(s) not logged` : ", nothing expected is missing"}.</div></div>
       ${it.flags.length ? `<div class="sec"><h4>Flags</h4>${it.flags.map((f) => `<div class="flagbox ${f.severity}">${f.severity === "warn" ? ICON.warn : ICON.info}<span>${esc(f.text)}</span></div>`).join("")}</div>` : ""}
       <div class="sec"><h4>Evidence found</h4>${it.evidence_found.length ? it.evidence_found.map((e) => `
-        <div class="evi"><span class="id">${e.eid}</span><div class="x"><b>${esc(e.label)}</b><div>${fmt(e.time)} · ${esc(e.provider)}${e.note ? `<br>${esc(e.note)}` : ""}</div></div>
+        <div class="evi"><span class="id eid" data-p="${esc(e.provider)}" title="What does ${e.eid} mean?">${e.eid}</span><div class="x"><b>${esc(e.label)}</b><div>${fmt(e.time)} · ${esc(e.provider)}${e.note ? `<br>${esc(e.note)}` : ""}</div></div>
         <button class="btn ghost small ctx" data-idx="${e.idx}" style="padding:3px 8px">context</button></div>`).join("") : '<div class="muted small">No direct evidence — verdict is inferred.</div>'}
         ${it.evidence_missing.map((m) => `<div class="evi miss"><span class="id">—</span><div class="x"><b>${esc(m)}</b><div>expected, not logged</div></div></div>`).join("")}</div>
       <div class="sec"><h4>Raw events</h4><div id="rawBox"><button class="btn" id="rawBtn" data-idx="${anchor ?? ""}">${ICON.list} Show events around this point</button></div></div>
@@ -640,7 +641,7 @@ async function loadRaw(idx, scroll) {
     const evs = await api(`/api/cases/${encodeURIComponent(S.c.id)}/events?around=${idx}&n=20`);
     box.innerHTML = `<div class="card" style="box-shadow:none"><div class="tbl-wrap" style="max-height:420px"><table class="t raw"><thead><tr><th>Time</th><th>Log</th><th>Provider</th><th>ID</th></tr></thead><tbody>
       ${evs.map((e) => `<tr class="click ${String(e.idx) === String(idx) ? "hl" : ""}" data-i="${e.idx}" title="${esc((e.msg || "").slice(0, 600))}"><td>${fmt(e.time).slice(5)}</td><td>${esc(shortChan(e.channel))}</td>
-        <td>${esc(e.provider.replace("Microsoft-Windows-", ""))}</td><td><b>${e.eid}</b></td></tr>
+        <td>${esc(e.provider.replace("Microsoft-Windows-", ""))}</td><td>${eidTag(e.eid, e.provider)}</td></tr>
         <tr class="dat" data-for="${e.idx}" style="display:none"><td colspan="4">${e.msg ? `<div class="lmsg">${esc(e.msg)}</div>` : ""}<pre class="data">${esc(JSON.stringify(e.data, null, 1))}</pre></td></tr>`).join("")}
       </tbody></table></div></div><div class="muted small" style="margin-top:6px">Click a row to see what the event says and its data. Highlighted row is the selected evidence.</div>`;
     $$("tr.click", box).forEach((r) => (r.onclick = () => { const d = $(`tr.dat[data-for="${r.dataset.i}"]`, box); d.style.display = d.style.display === "none" ? "" : "none"; }));
@@ -1051,7 +1052,7 @@ function logRow(ix, i, ts, off, r, rng = false) {
   const sub = r ? [r.label ? prov : "", r.text].filter(Boolean).join(" · ") : "", full = ix.full.get(i);
   return `<div class="lr ${st}${!rng && Math.abs(off) < 5e-4 ? " at" : ""}" data-idx="${i}" title="${esc(r?.msg || sub)}">
     <div class="lo"><b>${rng && off >= 60 ? `+${fmtDur(off)}` : fmtSec(off)}</b><span>${fmtMs(ts)}</span></div>
-    <div class="lx"><div>${r ? `<b class="mono">${r.eid}</b> ${esc(r.label || prov)}${log}` : "&nbsp;"}</div><div class="lt">${r ? esc(sub) || "&nbsp;" : "…"}</div></div></div>${
+    <div class="lx"><div>${r ? `${r.eid === "" ? "" : eidTag(r.eid, r.provider, "mono")} ${esc(r.label || prov)}${log}` : "&nbsp;"}</div><div class="lt">${r ? esc(sub) || "&nbsp;" : "…"}</div></div></div>${
     !ix.open.has(i) ? "" : !full ? '<pre class="data lpre">Loading…</pre>' : `<div class="lmsg${full.msg ? "" : " none"}">${esc(full.msg || "No message text for this event")}</div>
     <pre class="data lpre">${esc(JSON.stringify(full.data, null, 1))}</pre>`}`;
 }
@@ -1061,7 +1062,7 @@ async function getRows(ix, query, want) {
   rowsBusy = true;
   try {
     const rows = await api(`/api/cases/${encodeURIComponent(ix.cid)}/rows?${query}`);
-    if (ix.rows.size > 200000) ix.rows.clear();
+    if (ix.rows.size > 20000) ix.rows.clear();   // a few lists' worth; the ones in view come back in the next request
     rows.forEach((r) => ix.rows.set(r.idx, r));
     want.forEach((i) => { if (!ix.rows.has(i)) ix.rows.set(i, { idx: i, eid: "", level: 4, provider: "", channel: "", label: "(not found)", text: "", state: "" }); });
   } catch (e) { toast(e.message); return; } finally { rowsBusy = false; }
@@ -1109,7 +1110,7 @@ function tabDrive() {
       (!m || m([e.eid], `${e.label} ${e.provider} ${e.dev || ""} ${e.dev_basis || ""} ${e.channel}`)));
     $("#stN").textContent = rows.length < c.storage_events.length ? `${rows.length.toLocaleString()} of ${c.storage_events.length.toLocaleString()}` : "";
     pageRows($("#stT"), `<thead><tr><th>Time (${tzLabel()})</th><th>ID</th><th>Meaning</th><th>Provider</th><th>Drive</th><th>Log</th><th>State</th><th>Near</th></tr></thead>`, rows, (e) => `
-      <tr class="click ${e.state === "info" ? "info" : isHl(e.hl) ? "sam" : ""}" data-idx="${e.idx}"><td style="white-space:nowrap">${fmt(e.time)}</td><td class="mono"><b>${e.eid}</b></td><td>${esc(e.label)}</td>
+      <tr class="click ${e.state === "info" ? "info" : isHl(e.hl) ? "sam" : ""}" data-idx="${e.idx}"><td style="white-space:nowrap">${fmt(e.time)}</td><td class="mono">${eidTag(e.eid, e.provider)}</td><td>${esc(e.label)}</td>
         <td>${esc(e.provider.replace("Microsoft-Windows-", ""))}</td>
         <td>${known ? `<span class="chips">${devBadge(e)}<span class="small">${esc(e.dev || "not identified")}</span></span><div class="muted small">${esc(e.dev_basis || "")}</div>` : '<span class="muted small">re-run to identify</span>'}</td>
         <td class="muted small">${esc(shortChan(e.channel))}</td><td>${stateChip(e.state)}</td><td class="near">${nearCell(tsOf(e.time))}</td></tr>`,
@@ -1138,7 +1139,7 @@ function tabSoftware() {
       (!m || m([e.eid], `${e.label} ${e.subject || ""} ${e.detail || ""} ${e.provider} ${e.channel}`))).reverse();   // latest first
     $("#swN").textContent = rows.length < evs.length ? `${rows.length.toLocaleString()} of ${evs.length.toLocaleString()}` : "";
     pageRows($("#swT"), `<thead><tr><th title="Latest first">Time (${tzLabel()}) ↓</th><th>ID</th><th>What</th><th>App / update / service</th><th>Source</th><th>Severity</th><th>Near</th></tr></thead>`, rows, (e) => `
-      <tr class="click" data-idx="${e.idx}"><td style="white-space:nowrap">${fmt(e.time)}</td><td class="mono"><b>${e.eid}</b></td><td>${esc(e.label)}</td>
+      <tr class="click" data-idx="${e.idx}"><td style="white-space:nowrap">${fmt(e.time)}</td><td class="mono">${eidTag(e.eid, e.provider)}</td><td>${esc(e.label)}</td>
         <td>${esc(e.subject || "")}${e.detail ? `<div class="muted small">${esc(e.detail)}</div>` : ""}</td>
         <td class="muted small">${esc(e.provider.replace("Microsoft-Windows-", ""))} · ${esc(shortChan(e.channel))}</td><td>${stateChip(e.state)}</td>
         <td class="near">${nearCell(tsOf(e.time))}</td></tr>`,
@@ -1146,6 +1147,148 @@ function tabSoftware() {
   };
   onRows($("#swT"), (r) => openContext(r.dataset.idx, "App / update event"));
   bind(["swQ", "swF"], draw); draw();
+}
+
+/* ------------------------------------------------------------------ references: what each event ID means */
+/* the reference is one small list for every case, loaded once; the event IDs in the open case come once per case.
+   A lookup is one Map get, a search one pass over a few hundred lines */
+const REF_LOGS = [["s", "System"], ["a", "Application"], ["p", "Storport"]];
+const refKey = (p, e) => `${String(p).toLowerCase()}|${e}`;
+const eidTag = (eid, prov, cls = "") => `<b class="eid ${cls}" data-p="${esc(prov)}" title="What does ${eid} mean?">${eid}</b>`;
+let REF = null;
+function loadRef() {
+  REF = REF || api("/api/reference").then((rows) => {
+    const list = rows.map(([k, p, eid, title, text, use]) => {
+      const [a, b] = String(eid).split("-").map(Number);
+      return { k, p, eid, title, text, use, provs: p.split("|"), ids: b ? Array.from({ length: b - a + 1 }, (_, i) => a + i) : [a],
+        q: `${eid} ${p} ${title} ${text}`.toLowerCase() };
+    });
+    const by = new Map();
+    list.forEach((r) => r.provs.forEach((p) => r.ids.forEach((i) => by.set(refKey(p, i), r))));
+    return { list, by };
+  });
+  REF.catch(() => (REF = null));
+  return REF;
+}
+function loadIds() {
+  const cid = S.c.id;
+  if (S.ids?.cid !== cid) {
+    const p = api(`/api/cases/${encodeURIComponent(cid)}/ids`).then((rows) => {
+      const by = new Map();   // one per provider and ID, the logs it is in added up
+      rows.forEach((s) => { const k = refKey(s.p, s.e), o = by.get(k); by.set(k, !o ? s : { ...o, n: o.n + s.n, er: o.er + s.er, wa: o.wa + s.wa }); });
+      return { rows, by };
+    });
+    S.ids = { cid, p };
+    p.catch(() => { if (S.ids?.p === p) S.ids = null; });
+  }
+  return S.ids.p;
+}
+const plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? "" : "s"}`;
+/* what an ID means: the reference's words and what LENS uses it for, then - when the case has it - how often, first and
+   last (a click shows it on the timeline), what the drive's driver said and the message Windows wrote */
+function refBody(r, s) {
+  const use = r?.use || s?.u;
+  return `${r ? `<p class="rtext">${esc(r.text)}</p>` : `<p class="rtext muted">Not in LENS's reference yet${s?.m ? " — Windows' own words for it are below." : ", and Windows gave no message for it here: open one of these events to see its fields."}</p>`}
+    ${use ? `<div class="rline"><b>In LENS</b><span>${esc(use)}</span></div>` : ""}
+    ${s ? `<div class="rline"><b>In this case</b><span>${plural(s.n, "event")}${s.er ? ` · <em class="bad">${plural(s.er, "error")}</em>` : ""}${s.wa ? ` · <em class="warn">${plural(s.wa, "warning")}</em>` : ""}<br>
+      <span class="nw">${s.n > 1 ? "first" : "at"} <a class="rjump" data-t="${esc(s.ft)}" title="Show it on the timeline">${fmt(s.ft)}</a></span>${s.n > 1 ? ` · <span class="nw">last <a class="rjump" data-t="${esc(s.lt)}" title="Show it on the timeline">${fmt(s.lt)}</a></span>` : ""}</span></div>`
+      : S.c ? '<div class="rline"><b>In this case</b><span class="muted">not logged</span></div>' : ""}
+    ${s?.said ? `<div class="rline"><b>Driver said</b><span>${s.said.map(([t, n]) => `${esc(t)} <i>× ${n.toLocaleString()}</i>`).join(" · ")}${s.kinds > s.said.length ? ` · <i>${s.kinds - s.said.length} more</i>` : ""}</span></div>` : ""}
+    ${s?.m ? `<div class="lmsg" title="What Windows wrote for ${s.er || s.wa ? "the worst" : "the first"} of them">${esc(s.m)}</div>` : ""}`;
+}
+/* the shown ID's meaning, next to it */
+function closeRefPop() { const p = $("#refPop"); if (p) { p.classList.remove("open"); p._for = null; } }
+async function showRefPop(el) {
+  const pop = $("#refPop"), prov = el.dataset.p, eid = +el.textContent.trim(), key = refKey(prov, eid);
+  if (pop._for === el) return closeRefPop();
+  pop._for = el;
+  const head = (r) => `<div class="rp-h"><b class="mono">${eid}</b><span>${esc(r?.title || "Event " + eid)}</span><span class="muted small">${esc(prov.replace("Microsoft-Windows-", ""))}</span></div>`;
+  pop.innerHTML = head() + '<div class="muted small">Loading…</div>';
+  placePop(pop, el);
+  try {
+    const [ref, ids] = await Promise.all([loadRef(), S.c ? loadIds().catch(() => null) : null]);
+    if (pop._for !== el) return;   // another one was clicked meanwhile
+    const r = ref.by.get(key), s = ids?.by.get(key), k = r?.k || ids?.rows.find((x) => refKey(x.p, x.e) === key)?.k || "s";
+    pop.innerHTML = `${head(r)}${refBody(r, s)}${S.c ? `<a class="rgo" data-k="${k === "o" ? "p" : k}" data-q="${eid}" data-key="${esc(key)}">References ›</a>` : ""}`;
+    placePop(pop, el);
+  } catch (e) { if (pop._for === el) pop.innerHTML = head() + `<div class="muted small">${esc(e.message)}</div>`; }
+}
+function placePop(pop, el) {
+  const r = el.getBoundingClientRect(), w = Math.min(400, innerWidth - 24);
+  pop.style.width = `${w}px`; pop.classList.add("open");
+  const h = pop.offsetHeight, below = r.bottom + 6 + h <= innerHeight - 12;
+  pop.style.left = `${Math.min(innerWidth - w - 12, Math.max(12, r.left - 14))}px`;
+  pop.style.top = `${below ? r.bottom + 6 : Math.max(12, r.top - 6 - h)}px`;
+}
+/* the timeline's line at this moment, with the three logs around it */
+function showOnTimeline(t) {
+  closeRefPop(); closeDrawer();
+  const tl = (S.tl = S.tl || {});
+  tl.range = null; tl.cur = t;
+  if (tl.t0 != null && (t < tl.t0 || t > tl.t1)) { const h = (tl.t1 - tl.t0) / 2; tl.t0 = t - h; tl.t1 = t + h; }
+  S.tab = "timeline"; renderCase();
+}
+function tabRefs() {
+  const lg = S.v.refLog || "s";
+  $("#tabBody").innerHTML = `
+    <div class="row" style="margin-bottom:12px">
+      ${REF_LOGS.map(([k, l]) => `<button class="fchip ${lg === k ? "on" : ""}" data-k="${k}">${l}<span class="badge" id="refN-${k}"></span></button>`).join("")}
+      <div class="spacer"></div><span class="muted small" id="refC"></span>${searchBox("refQ")}
+    </div>
+    <div class="card"><div class="tbl-wrap" style="max-height:calc(100vh - 290px)"><table class="t" id="refT"><tbody><tr><td class="empty">Loading the reference…</td></tr></tbody></table></div></div>`;
+  $$(".fchip[data-k]").forEach((b) => (b.onclick = () => { S.v.refLog = b.dataset.k; tabRefs(); }));
+  let data = null;
+  bind(["refQ"], () => data && drawRefs(...data));
+  $("#refT").onclick = (ev) => {
+    const j = ev.target.closest(".rjump"); if (j) return showOnTimeline(tsOf(j.dataset.t));
+    const tr = ev.target.closest("tr.click"); if (!tr) return;
+    const next = tr.nextElementSibling;
+    if (next?.classList.contains("rdet")) { next.remove(); tr.classList.remove("open"); return; }
+    const x = S.refRows?.get(tr.dataset.key); if (!x) return;
+    tr.classList.add("open");
+    tr.insertAdjacentHTML("afterend", `<tr class="rdet"><td colspan="4">${refBody(x.r, x.s)}</td></tr>`);
+  };
+  Promise.all([loadRef(), loadIds()]).then((d) => { if (S.tab === "refs" && $("#refT")) { data = d; drawRefs(...d); } })
+    .catch((e) => { if ($("#refT")) $("#refT").innerHTML = `<tr><td class="empty">${esc(e.message)}</td></tr>`; });
+}
+/* one log at a time: the IDs in this case first - errors, then warnings, then the most frequent - then the reference's
+   other IDs for that log. A search looks through all three logs; their counts say where the matches are */
+function drawRefs(ref, ids) {
+  const lg = S.v.refLog || "s", m = matcher(S.v.refQ);
+  const mine = ids.rows.map((s) => { const r = ref.by.get(refKey(s.p, s.e)); return { s, r, k: s.k === "o" ? r?.k || "p" : s.k, key: `${s.k}|${refKey(s.p, s.e)}` }; });
+  const used = new Set(mine.map((x) => x.r));
+  const rest = ref.list.filter((r) => !used.has(r)).map((r, i) => ({ r, k: r.k, key: `r${i}` }));
+  const hit = (x) => !m || (x.s ? m([x.s.e], `${x.s.e} ${x.s.p} ${x.r?.title || ""} ${x.r?.text || ""} ${x.s.m || ""} ${(x.s.said || []).map((y) => y[0]).join(" ")}`) : m(x.r.ids, x.r.q));
+  const all = [...mine, ...rest].filter(hit);
+  REF_LOGS.forEach(([k]) => ($(`#refN-${k}`).textContent = (m ? all : mine).filter((x) => x.k === k).length));
+  const sev = (s) => (s.er ? 2 : s.wa ? 1 : 0);
+  const a = all.filter((x) => x.k === lg && x.s).sort((p, q) => sev(q.s) - sev(p.s) || q.s.n - p.s.n);
+  const b = all.filter((x) => x.k === lg && !x.s).sort((p, q) => p.r.ids[0] - q.r.ids[0]);
+  const rows = [...a, ...(b.length ? [{ sep: `${a.length ? "Not in this case" : "Known IDs"} · ${b.length}` }] : []), ...b];
+  S.refRows = new Map(rows.filter((x) => !x.sep).map((x) => [x.key, x]));
+  $("#refC").textContent = m ? `${all.length} found` : `${a.length} in this case · ${b.length} more known`;
+  const else_ = m && all.length ? ` — ${REF_LOGS.filter(([k]) => k !== lg && all.some((x) => x.k === k)).map(([, l]) => l).join(", ")} has some` : "";
+  pageRows($("#refT"), `<thead><tr><th>ID</th><th>Source</th><th>What it means</th><th class="rn">In this case</th></tr></thead>`, rows, refRow,
+    m ? `No match in this log${else_}.` : "No IDs for this log.");
+  const want = S.refOpen && rows.find((x) => !x.sep && (x.s ? refKey(x.s.p, x.s.e) === S.refOpen : x.r === ref.by.get(S.refOpen)));
+  S.refOpen = null;
+  const tr = want && $(`#refT tr.click[data-key="${CSS.escape(want.key)}"]`);
+  if (tr) { tr.click(); tr.scrollIntoView({ block: "center" }); }
+}
+/* how many: the count, and how many of them were errors or warnings - just that when it is all of them */
+function refCount(s) {
+  const [n, cls, w] = s.er ? [s.er, "error", "error"] : s.wa ? [s.wa, "warning", "warning"] : [0];
+  const chip = n ? `<span class="chip ${cls}">${plural(n, w)}</span>` : "";
+  return n === s.n ? chip : `${s.n.toLocaleString()}${chip ? " " + chip : ""}`;
+}
+function refRow(x) {
+  if (x.sep) return `<tr class="rsep"><td colspan="4">${esc(x.sep)}</td></tr>`;
+  const { r, s } = x, prov = (s ? s.p : r.provs.join(" / ")).replace(/Microsoft-Windows-/g, "");
+  const what = r ? `<div>${esc(r.title)}</div><div class="muted small">${esc(r.text)}</div>`
+    : `<div>${s.m ? esc(s.m.split("\n")[0]) : '<span class="muted">No description yet</span>'}</div><div class="muted small">${s.m ? "What Windows says — not in the reference yet" : "Open one of these events to see its fields"}</div>`;
+  return `<tr class="click ${s ? "" : "rk"}" data-key="${esc(x.key)}"><td class="mono"><b>${s ? s.e : esc(String(r.eid).replace("-", "–"))}</b></td>
+    <td class="muted small rp">${esc(prov)}</td><td class="rm">${what}</td>
+    <td class="rn">${s ? refCount(s) : '<span class="muted">—</span>'}</td></tr>`;
 }
 
 /* ------------------------------------------------------------------ data quality */
@@ -1194,7 +1337,21 @@ async function init() {
   $("#tzSelect").onchange = () => { store.set("tz", $("#tzSelect").value); S.c ? renderCase() : renderHome(); };
   $("#brandHome").onclick = renderHome; $("#newBtn").onclick = renderHome;
   $("#drawerBack").onclick = closeDrawer;
-  document.addEventListener("keydown", (e) => e.key === "Escape" && closeDrawer());
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if ($("#refPop.open")) closeRefPop(); else closeDrawer(); } });
+  /* an event ID anywhere: a click shows what it means (and does not open its row); a click elsewhere closes it */
+  document.addEventListener("click", (ev) => {
+    const el = ev.target.closest(".eid");
+    if (el) { ev.preventDefault(); ev.stopPropagation(); return showRefPop(el); }
+    if (!ev.target.closest("#refPop")) closeRefPop();
+  }, true);
+  addEventListener("scroll", (ev) => { if (!$("#refPop").contains(ev.target)) closeRefPop(); }, true);
+  addEventListener("resize", closeRefPop);
+  $("#refPop").onclick = (ev) => {
+    const j = ev.target.closest(".rjump"); if (j) return showOnTimeline(tsOf(j.dataset.t));
+    const g = ev.target.closest(".rgo"); if (!g) return;
+    S.v.refLog = g.dataset.k; S.v.refQ = g.dataset.q; S.refOpen = g.dataset.key;   // the References tab, on this ID, opened
+    closeRefPop(); closeDrawer(); S.tab = "refs"; renderCase();
+  };
   document.addEventListener("keydown", (e) => {   // timeline: ← → move the line to the previous / next event, or a range by its length
     if ((e.key !== "ArrowLeft" && e.key !== "ArrowRight") || S.tab !== "timeline" || !$("#tlcur") || $("#drawer").classList.contains("open")
       || /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName || "")) return;

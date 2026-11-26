@@ -13,15 +13,15 @@ FOLDER_LOGS are read; a file given by itself is always read.
 """
 from __future__ import annotations
 
-import io
 import os
 import re
 import shutil
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
-from typing import Iterable, List, Tuple
+from typing import Iterable, Iterator, List, Tuple
 
-from .models import Event, parse_time
+from .models import Event, no_gc, parse_time
 
 _INVALID_XML = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 MSG_MAX = 8000
@@ -32,15 +32,23 @@ FOLDER_LOGS = ("System", "Application", "Microsoft-Windows-Storage-Storport/Oper
                "Microsoft-Windows-Storage-Storport/Health")
 
 
+_PIECE = 1 << 20                      # XML is read 1M characters at a time
+_TAGS: dict = {}
+
+
 def _local(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1]
+    """'{namespace}EventData' -> 'EventData' (worked out once per tag name)."""
+    name = _TAGS.get(tag)
+    if name is None:
+        name = _TAGS[tag] = sys.intern(tag.rsplit("}", 1)[-1])
+    return name
 
 
 def _message(text: str | None) -> str:
     """The General text, tidied: Windows line ends, trailing spaces and the invisible direction marks before times."""
     s = (text or "").replace("\r\n", "\n").replace("\r", "\n").replace("\u200e", "").replace("\u200f", "")
-    s = re.sub(r"\n{3,}", "\n\n", "\n".join(line.rstrip() for line in s.split("\n"))).strip()
-    return s[:MSG_MAX]
+    s = "\n".join(line.rstrip() for line in s.split("\n"))
+    return (re.sub(r"\n{3,}", "\n\n", s) if "\n\n\n" in s else s).strip()[:MSG_MAX]
 
 
 def _event_from_elem(ev: ET.Element, source: str) -> Event | None:
@@ -60,7 +68,7 @@ def _event_from_elem(ev: ET.Element, source: str) -> Event | None:
                 if not key:
                     n += 1
                     key = f"param{n}"
-                payload[key] = (d.text or "").strip()
+                payload[sys.intern(key)] = (d.text or "").strip()
         elif name == "UserData":
             for leaf in child.iter():
                 if len(leaf) == 0 and leaf is not child:
@@ -105,29 +113,61 @@ def _event_from_elem(ev: ET.Element, source: str) -> Event | None:
                     t = None
     if t is None:
         return None
-    return Event(time=t, channel=chan, provider=prov, eid=eid, rid=rid, level=level,
-                 computer=comp, data=payload, msg=msg, source=os.path.basename(source))
+    # the same few names in every event: one copy of each instead of one per event
+    return Event(time=t, channel=sys.intern(chan), provider=sys.intern(prov), eid=eid, rid=rid, level=level,
+                 computer=sys.intern(comp), data=payload, msg=msg, source=source)
 
 
 def parse_xml_text(text: str, source: str, partial: bool = False) -> List[Event]:
     """Parse a blob of XML containing <Event> elements (with or without a root).
     partial: the text may stop part way - keep the events read up to there."""
-    text = _INVALID_XML.sub("", text)
-    text = re.sub(r"^\s*<\?xml[^>]*\?>", "", text)
-    if not re.match(r"\s*<Events[\s>]", text):
-        text = "<Events>" + text + "</Events>"
+    return _parse_pieces((text[i:i + _PIECE] for i in range(0, len(text), _PIECE)), source, partial)
+
+
+def parse_xml_file(path: str) -> List[Event]:
+    """Parse an XML log file a piece at a time: the whole file is never in memory."""
+    with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
+        return _parse_pieces(iter(lambda: fh.read(_PIECE), ""), path)
+
+
+def _parse_pieces(pieces: Iterator[str], source: str, partial: bool = False) -> List[Event]:
+    """Events from XML text that arrives in pieces. No copy of the whole text is made, and each event's elements
+    are dropped as soon as it is read, so memory holds the events, not the XML."""
+    source = os.path.basename(source)
+    p = ET.XMLPullParser(events=("end",))
     out: List[Event] = []
+    first, wrapped = True, False
     try:
-        for _, elem in ET.iterparse(io.StringIO(text), events=("end",)):
-            if _local(elem.tag) == "Event":
-                e = _event_from_elem(elem, source)
-                if e:
-                    out.append(e)
-                elem.clear()
+        for s in pieces:
+            s = _INVALID_XML.sub("", s)
+            if first:
+                s = re.sub(r"^\s*<\?xml[^>]*\?>", "", s.lstrip("\ufeff"))
+                wrapped = not re.match(r"\s*<Events[\s>]", s)    # wevtutil without /e, several roots: give them one
+                if wrapped:
+                    p.feed("<Events>")
+                first = False
+            p.feed(s)
+            _take(p, out, source)
+        if first:                                                    # no text at all: no events
+            p.feed("<Events>")
+            wrapped = True
+        if wrapped:
+            p.feed("</Events>")
+        p.close()
+        _take(p, out, source)
     except ET.ParseError:
         if not partial:
             raise
     return out
+
+
+def _take(p: ET.XMLPullParser, out: List[Event], source: str) -> None:
+    for _, elem in p.read_events():
+        if _local(elem.tag) == "Event":
+            e = _event_from_elem(elem, source)
+            if e:
+                out.append(e)
+            elem.clear()
 
 
 def _decode(raw: bytes) -> str:
@@ -200,7 +240,7 @@ def _parse_evtx_python(path: str) -> List[Event]:
                 elem = ET.fromstring(_INVALID_XML.sub("", rec.xml()))
             except Exception:
                 continue
-            e = _event_from_elem(elem, path)
+            e = _event_from_elem(elem, os.path.basename(path))
             if e:
                 out.append(e)
     return out
@@ -254,6 +294,11 @@ def expand_paths(paths: Iterable[str]) -> Tuple[List[str], List[str]]:
 
 def load(paths: Iterable[str]) -> Tuple[List[Event], List[dict], List[str]]:
     """Return (events, per-file source info, files skipped in folders)."""
+    with no_gc():
+        return _load(paths)
+
+
+def _load(paths: Iterable[str]) -> Tuple[List[Event], List[dict], List[str]]:
     events: List[Event] = []
     sources: List[dict] = []
     files, skipped = expand_paths(paths)
@@ -261,8 +306,7 @@ def load(paths: Iterable[str]) -> Tuple[List[Event], List[dict], List[str]]:
         info = {"file": os.path.basename(f), "path": f, "events": 0, "reader": None, "error": None}
         try:
             if f.lower().endswith(".xml"):
-                with open(f, "r", encoding="utf-8", errors="replace") as fh:
-                    evs = parse_xml_text(fh.read(), f)
+                evs = parse_xml_file(f)
                 info["reader"] = "xml"
             else:
                 evs, info["reader"] = parse_evtx(f)

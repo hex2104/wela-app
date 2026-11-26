@@ -314,6 +314,35 @@ pre.lpre{margin:0 10px 8px;max-height:220px;overflow:auto}
 .raw td{padding:5px 8px!important}
 pre.data{margin:6px 0 0;white-space:pre-wrap;word-break:break-all;background:var(--panel-2);border-radius:8px;padding:8px;font-size:11.5px}
 
+/* ---------- references: what each event ID means ---------- */
+/* an event ID anywhere: a click shows its meaning */
+.eid{cursor:pointer;text-decoration:underline dotted var(--muted);text-underline-offset:3px;text-decoration-thickness:1px}
+.eid:hover{color:var(--accent);text-decoration-color:var(--accent)}
+.refpop{position:fixed;z-index:55;display:none;background:var(--panel);border:1px solid var(--line);border-radius:11px;box-shadow:0 8px 30px rgba(10,20,50,.2);padding:12px 14px;font-size:12.5px;line-height:1.5}
+.refpop.open{display:block}
+.rp-h{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:4px;font-size:13.5px}
+.rp-h b{font-size:13.5px}.rp-h span:nth-child(2){font-weight:600}
+.rtext{margin:0 0 8px;color:var(--ink)}
+.rline{display:grid;grid-template-columns:82px 1fr;gap:8px;margin:3px 0;color:var(--ink-2)}
+.rline b{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
+.rline em{font-style:normal;font-weight:600}.rline em.bad{color:var(--bad)}.rline em.warn{color:var(--warn)}
+.rline i{color:var(--muted);font-style:normal}
+.rjump,.rgo{color:var(--accent);cursor:pointer;font-weight:600;white-space:nowrap}
+.nw{white-space:nowrap}
+.rjump:hover,.rgo:hover{text-decoration:underline}
+.rgo{display:inline-block;margin-top:8px}
+.refpop .lmsg,tr.rdet .lmsg{margin:8px 0 0;max-height:140px;overflow:auto}
+table.t td.rm{width:64%;max-width:0}
+.rm>div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.t td.rp{white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
+table.t .rn{text-align:right;white-space:nowrap}
+table.t tr.rk td{color:var(--muted)}
+table.t tr.rk td.rm>div:first-child{color:var(--ink-2)}
+table.t tr.open td{background:var(--accent-soft)}
+table.t tr.rsep td{background:var(--panel-2);color:var(--muted);font-size:11.5px;font-weight:600;padding:6px 12px;letter-spacing:.02em}
+table.t tr.rdet td{background:var(--panel-2);padding:10px 16px 14px;font-size:12.5px;line-height:1.5}
+tr.rdet .rtext{max-width:880px}
+
 /* ---------- misc ---------- */
 .tooltip{position:fixed;pointer-events:none;background:var(--ink);color:var(--bg);padding:7px 10px;border-radius:8px;font-size:12px;max-width:300px;opacity:0;transition:opacity .1s;z-index:60;line-height:1.4}
 .tooltip b{display:block}

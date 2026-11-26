@@ -132,6 +132,15 @@ Partition and Setup are not read from a folder: add them as files of their own.
     carry it too). The timeline rows show its first line, a click opens all of it above the event's fields, and
     search finds words in it. A provider that PC does not have, and python-evtx outside Windows, give no message; the
     Data quality tab counts the events read with one per file.
+13. **What each event ID means**: click any event ID — in the timeline's lists, the detail panel, the Drive and Apps &
+    updates tables — for what it means, what LENS uses it for, how often the case logged it (first and last, a click
+    shows it on the timeline) and the message Windows wrote for it. The **References** tab lists them by log (System,
+    Application, Storport): the IDs in this case first — errors, then warnings, then the most frequent — then the other
+    known ones, with a search (an ID or words). Storport's *miniport* events (516–534, 567–571 — "The miniport logged an
+    event") are the storage driver's own; LENS shows what the driver said (`MiniportEventDescription`), counted. A storage
+    event with no rule of its own is named by its meaning (Storport 549 *First I/O error in a period*), not "Storport
+    event 549". The meanings — about 230 lines, worded from the providers' own message texts — are in
+    `lens/reference.py`; a `"references"` list in `lens_config.json` adds IDs or replaces lines (same shape).
 
 All event IDs, weights, vendor rules and thresholds live in `lens/catalog.py`. Override any of them with `lens_config.json`
 next to `run_lens.py`, e.g.
@@ -139,6 +148,15 @@ next to `run_lens.py`, e.g.
 ```json
 { "settings": { "drive_window_s": 120, "restart_gap_s": 600, "software_window_s": 1800 } }
 ```
+
+## Big cases
+
+Logs are read a piece at a time, and a saved case keeps its events in compressed blocks of 256 with a small index
+(`events.jsonl.gz` stays one ordinary gzip file): an open case holds only those, and each request decodes just the
+blocks it needs. On 268,066 events (204 MB of XML), on a laptop: reading 7.0 → 4.5 s with peak memory 1.5 GB → 330 MB;
+saving 2.5 → 1.6 s; opening a saved case 1.0 s → 0.1 s, holding 727 MB → 7 MB. The analysis step grows in step with the
+log: 203,600 events (6,400 power cycles) in 1.7 s (was 5.1 s). A case saved by an earlier version is rewritten in the
+new layout the first time it is opened.
 
 ## Project layout
 
@@ -148,11 +166,12 @@ lens/
   parser.py            .evtx (wevtutil / PowerShell / python-evtx) and .xml -> events with their messages;
                        which logs a folder gives
   catalog.py           event IDs, weights, thresholds, drive vendors, software events  <- tune here
+  reference.py         what each event ID means (References tab, a click on an ID)
   engine.py            timeline, integrity, boots, sessions, classification, sleep, drive identity +
                        correlation, software trigger
   report.py            HTML / Excel / CSV / JSON export (no dependencies)
   server.py            local HTTP server + API
-  store.py             cases saved under ./cases
+  store.py             cases saved under ./cases: events in compressed blocks + index, read a block at a time
   demo.py              synthetic demo logs with expected verdicts
 web/                   UI (vanilla HTML/CSS/JS, works offline)
 tests/                 unittest suite (demo scenario, rule tests, random-input robustness test)

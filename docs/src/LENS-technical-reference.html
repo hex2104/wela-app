@@ -161,8 +161,8 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
 <div class="grid3">
   <div class="tile"><b>0 installs</b><span>Python standard library only; <code>.evtx</code> read with Windows' own <code>wevtutil</code></span></div>
   <div class="tile" style="--c:var(--ok)"><b>100 % local</b><span>UI served on 127.0.0.1 only; no internet; no data leaves the PC</span></div>
-  <div class="tile" style="--c:var(--purple)"><b>~4.7 s</b><span>to analyse ~200,000 events (6,400 power cycles) — analysis step, measured on a laptop</span></div>
-  <div class="tile" style="--c:var(--sam)"><b>59 tests</b><span>rule tests, a full demo scenario with known answers, and a random-input robustness test</span></div>
+  <div class="tile" style="--c:var(--purple)"><b>~1.7 s</b><span>to analyse ~200,000 events (6,400 power cycles) — analysis step, measured on a laptop</span></div>
+  <div class="tile" style="--c:var(--sam)"><b>72 tests</b><span>rule tests, a full demo scenario with known answers, and a random-input robustness test</span></div>
   <div class="tile" style="--c:var(--warn)"><b>Every verdict</b><span>lists the events found, the expected events not logged, its reasons and a confidence score</span></div>
   <div class="tile" style="--c:var(--bad)"><b>4 export formats</b><span>HTML report, Excel workbook (7 sheets), CSV and JSON</span></div>
 </div>
@@ -247,15 +247,15 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 <h2>Components</h2>
 <table class="t compact">
   <thead><tr><th style="width:24%">File</th><th>Responsibility</th><th style="width:9%">Lines</th></tr></thead><tbody>
-  <tr><td class="mono">lens/parser.py</td><td>Reads <code>.evtx</code> (wevtutil, then PowerShell, then the optional python-evtx package on non-Windows) and XML exports into one normalised event record: UTC time, log, provider, event ID, record ID, level, data fields, message. From a folder it picks only System, Application and Storport (Operational, Health).</td><td>276</td></tr>
-  <tr><td class="mono">lens/catalog.py</td><td>The knowledge base: every power signal, storage and software event ID, evidence weight, threshold, crash code, vendor rule and shutdown-initiator pattern.</td><td>295</td></tr>
-  <tr><td class="mono">lens/engine.py</td><td>The analysis pipeline (chapter 5): from timeline to verdicts, confidence, drive identity, software trigger and the app / update lists.</td><td>1,502</td></tr>
+  <tr><td class="mono">lens/parser.py</td><td>Reads <code>.evtx</code> (wevtutil, then PowerShell, then the optional python-evtx package on non-Windows) and XML exports into one normalised event record: UTC time, log, provider, event ID, record ID, level, data fields, message. From a folder it picks only System, Application and Storport (Operational, Health).</td><td>320</td></tr>
+  <tr><td class="mono">lens/catalog.py<br>lens/reference.py</td><td>The knowledge base: every power signal, storage and software event ID, evidence weight, threshold, crash code, vendor rule and shutdown-initiator pattern · what each event ID means, in plain words.</td><td>295<br>445</td></tr>
+  <tr><td class="mono">lens/engine.py</td><td>The analysis pipeline (chapter 5): from timeline to verdicts, confidence, drive identity, software trigger and the app / update lists.</td><td>1,530</td></tr>
   <tr><td class="mono">lens/report.py</td><td>Self-contained HTML report, Excel workbook written directly as Office Open XML (no library), CSV and JSON.</td><td>451</td></tr>
   <tr><td class="mono">lens/server.py</td><td>Local HTTP server and JSON API; native file / folder picker.</td><td>255</td></tr>
-  <tr><td class="mono">lens/store.py</td><td>Saves each case under <code>./cases/&lt;id&gt;</code> (result JSON + compressed events); keeps the open case's events in memory and builds the timeline's event index from them.</td><td>166</td></tr>
-  <tr><td class="mono">lens/demo.py</td><td>Synthetic demo logs covering every tricky scenario, with the expected answers the tests check.</td><td>381</td></tr>
-  <tr><td class="mono">web/ (app.js, app.css, index.html)</td><td>The UI — vanilla JavaScript and CSS, no frameworks or CDN, works offline; light and dark themes.</td><td>1,588</td></tr>
-  <tr><td class="mono">tests/test_engine.py</td><td>59 automated tests (chapter 14).</td><td>675</td></tr>
+  <tr><td class="mono">lens/store.py</td><td>Saves each case under <code>./cases/&lt;id&gt;</code>: result JSON, events in compressed blocks with an index; an open case decodes only the blocks a request needs.</td><td>369</td></tr>
+  <tr><td class="mono">lens/demo.py</td><td>Synthetic demo logs covering every tricky scenario, with the expected answers the tests check.</td><td>389</td></tr>
+  <tr><td class="mono">web/ (app.js, app.css, index.html)</td><td>The UI — vanilla JavaScript and CSS, no frameworks or CDN, works offline; light and dark themes.</td><td>1,775</td></tr>
+  <tr><td class="mono">tests/test_engine.py</td><td>72 automated tests (chapter 14).</td><td>816</td></tr>
 </tbody></table>
 
 <h2>Technology choices — and why</h2>
@@ -269,7 +269,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
   <tr><td class="k">Excel written directly</td><td>Office Open XML is a zip of XML files; writing it directly avoids an external dependency while still giving frozen headers, filters and highlighted rows.</td></tr>
 </tbody></table>
 <h3>Local API (used by the UI)</h3>
-<p class="small"><code>GET /api/cases</code> · <code>GET /api/cases/&lt;id&gt;</code> · <code>GET /api/cases/&lt;id&gt;/events?around=&lt;idx&gt;&amp;n=20</code> · <code>GET /api/cases/&lt;id&gt;/events?tag=software&amp;from=…&amp;to=…</code> (a whole app / update list) · <code>GET /api/cases/&lt;id&gt;/index</code> (every event's time and log, for the timeline line) · <code>GET /api/cases/&lt;id&gt;/rows?from=&lt;i&gt;&amp;to=&lt;j&gt;</code> (short rows for events i … j−1, or <code>?ids=…</code>) · <code>GET /api/cases/&lt;id&gt;/export.(html|xlsx|csv|json)?tz=330</code> ·
+<p class="small"><code>GET /api/cases</code> · <code>GET /api/cases/&lt;id&gt;</code> · <code>GET /api/cases/&lt;id&gt;/events?around=&lt;idx&gt;&amp;n=20</code> · <code>GET /api/cases/&lt;id&gt;/events?tag=software&amp;from=…&amp;to=…</code> (a whole app / update list) · <code>…/index</code> (every event's time and log) · <code>…/rows?from=&lt;i&gt;&amp;to=&lt;j&gt;</code> (short rows; or <code>?ids=…</code>) · <code>…/ids</code> and <code>/api/reference</code> (event IDs, meanings) · <code>GET /api/cases/&lt;id&gt;/export.(html|xlsx|csv|json)?tz=330</code> ·
   <code>POST /api/analyze</code> · <code>POST /api/demo</code> · <code>POST /api/pick</code> · <code>DELETE /api/cases/&lt;id&gt;</code> · <code>GET /api/config</code></p>
 
 <!-- ============================================================ 4 INPUTS -->
@@ -652,7 +652,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 
 <!-- ============================================================ 12 TOUR -->
 <h1 id="tour"><span class="n">12</span>Tour of the application</h1>
-<div class="lead">Six tabs per case. Start the app with <code>python run_lens.py</code>; the browser opens at http://127.0.0.1:8765.</div>
+<div class="lead">Seven tabs per case. Start with <code>python run_lens.py</code>; the browser opens at http://127.0.0.1:8765.</div>
 <figure><img src="img/s_overview.jpg" style="max-height:150mm;object-fit:cover;object-position:top"><figcaption><b>Overview.</b> Tiles per power-cycle type (click to filter). "Did the drive cause it?" with the teal <i>with Samsung drive problems</i> tile and Samsung badges on the suspect power cycles. "What triggered it?" breaks power cycles down by software trigger (click a bar to list them). Hard-shutdown causes, needs-review list, log coverage, storage and app/update summaries follow below.</figcaption></figure>
 <figure class="pb"><img src="img/s_cycles.jpg"><figcaption><b>Power cycles.</b> One row per power cycle and sleep: time, type, detail, off time, confidence, drive state with Samsung badge (teal stripe on the row), drive verdict, software trigger with its strength and confidence, flags. Filters on one row — <i>All, Shutdown, Restart, Hard, Sleep</i> and <i>Samsung drive</i>; <i>Undetermined, Needs review, Drive suspected, Drive errors after</i> and <i>Triggered by software</i> sit under <b>More</b>, whose button names the one in use. Long lists show 150 rows at once and add the next as you scroll. Search: a number finds those event IDs exactly — in the evidence and in each power cycle's drive and app lists; anything else searches the text.</figcaption></figure>
 <div class="side">
@@ -673,7 +673,8 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 <figure class="pb"><img src="img/s_drive.jpg"><figcaption><b>Drive tab.</b> Disk cards from the inventory (Samsung outlined in teal, other vendors labelled), a per-drive summary (named or mapped / probably / other drive / not identified), drive and <i>Show</i> filters (all activity, warnings &amp; errors, normal activity, or one state), and every storage event with the drive and how it was identified — normal activity in grey, the tab's count is the warnings and errors. <b>Near</b> shows the time since the power cycle before and to the one after (click either to open it); search by event ID or text.</figcaption></figure>
 <figure><img src="img/s_software.jpg"><figcaption><b>Apps &amp; updates tab.</b> Every crash, hang, Windows Update, installer and service event, latest first, filterable by kind and searchable by event ID, with the app / update / service named; <b>Near</b> gives the time since the power cycle before and to the one after.</figcaption></figure>
 <figure><img src="img/s_timeline.jpg"><figcaption><b>Timeline.</b> Zoom and pan across the whole log period: powered-on sessions, transitions, sleeps, a dedicated <b>Samsung drive</b> lane, other storage events, the <b>Apps &amp; updates</b> lane, and log coverage per channel; record gaps shaded. <b>The line</b> — drag it, click anywhere, or step with ← → (Shift: a power cycle at a time) — lists below it every <b>System</b>, <b>Application</b> and <b>Storport</b> event within ± 5 s (1–60 s to choose), each with its offset from the line and its log time to the millisecond. <b>Range</b> (or Shift-drag on the timeline) gives a start and an end line to drag, and the three logs list every event between them, 200 more as a list is scrolled, with a heading for each day; ← → move it by its own length. Here a range covers T5: the I/O retries, NVMe resets and Storport warnings, then the boot. Each row says what the event says — its message, as on Event Viewer's <i>General</i> tab — and clicking it opens the whole message above the event's fields. Thin green ticks on the drive lanes are the drive's normal activity; a power-cycle marker opens its details. With hundreds of marks in view (a case with thousands of power cycles, zoomed out), each lane shows its most important mark per slot and the tooltip says how many more are there.</figcaption></figure>
-<p class="small">Also: <b>Data quality</b> tab (chapter 11), a case list in the sidebar (cases are saved locally), time-zone selector, dark mode, and analysis settings on the home screen (drive window, software trigger window, restart gap, review threshold, quiet-gap length). The path box on the home screen starts empty for every new analysis.</p>
+<figure><img src="img/s_refs.jpg" style="max-height:46mm;object-fit:cover;object-position:top"><figcaption><b>References.</b> What each event ID means, by log, the case's IDs first; search by ID or words. A row adds what LENS uses it for, how often it was logged (first / last open the timeline), Windows' message and, for Storport miniport events, <i>what the driver said</i>. <b>Any ID in the app</b> shows this when clicked.</figcaption></figure>
+<p class="small">Also: <b>Data quality</b> tab (chapter 11), a case list in the sidebar (cases are saved locally), time-zone selector, dark mode, and analysis settings on the home screen (drive window, software trigger window, restart gap, review threshold, quiet-gap length).</p>
 
 <!-- ============================================================ 13 EXPORTS -->
 <h1 id="exports"><span class="n">13</span>Exports and command line</h1>
@@ -722,7 +723,7 @@ python -m unittest discover -s tests -v</pre>
 
 <!-- ============================================================ 14 TESTING -->
 <h1 id="testing"><span class="n">14</span>Quality, testing and performance</h1>
-<div class="lead">59 automated tests pin down every rule; a demo case with known answers checks the whole pipeline; a random-input test checks it never crashes.</div>
+<div class="lead">72 automated tests pin down every rule; a demo case with known answers checks the whole pipeline; a random-input test checks it never crashes.</div>
 <table class="t">
   <thead><tr><th style="width:24%">Test group</th><th style="width:9%">Tests</th><th>What it proves</th></tr></thead><tbody>
   <tr><td class="k">Demo scenario</td><td>11</td><td>All 4 demo logs parse; all 16 power cycles and 5 sleeps get the expected verdict; drive cause/effect, Samsung attribution, software triggers, the app / update lists from one power cycle to the next, data-quality findings and all four exports are as expected; exports leave the user's account name out.</td></tr>
@@ -730,7 +731,7 @@ python -m unittest discover -s tests -v</pre>
   <tr><td class="k">Which drive</td><td>10</td><td>Storport naming, Samsung part number without the name, other vendors, disk-number mapping, <b>disk numbers that swap between boots</b>, "only drive" inference, no-inventory rule, WHEA never guessed, serial formats merged, configurable vendor.</td></tr>
   <tr><td class="k">Software trigger</td><td>17</td><td>Reason-code decoding, user / Windows Update / "Update and restart" / vendor tools / installer, service-recovery restart, no-1074 cases, system-process crash, hang as symptom, update still installing, shutdown requested but hung, battery note, named and unnamed event fields; lists keep the nearest events and sum up older problems; the verdict stops at the power cycle before; whose account asked, in several Windows languages.</td></tr>
   <tr><td class="k">Folder selection</td><td>2</td><td>Only System, Application and Storport (Operational, Health) are read from a folder — by winevt\Logs and by exported file names; other logs are skipped and counted; a file given by itself is always read; the demo folder skips its Partition log.</td></tr>
-  <tr><td class="k">Timeline line</td><td>2</td><td>The event index gives every event its time to the millisecond and its log, the same from memory as read back from disk; rows say what each event is, with the label and the fields that matter.</td></tr>
+  <tr><td class="k">Store · references · XML</td><td>15</td><td>Index and rows; blocks give back every event; search by time and tag; IDs counted once; older cases converted; every ID LENS uses has a meaning; XML read in pieces of any size.</td></tr>
   <tr><td class="k">Robustness</td><td>1</td><td>30 rounds of up to 400 random, malformed events (bad times, garbage fields, huge numbers, odd Unicode) through the engine and every export — nothing may crash.</td></tr>
 </tbody></table>
 <h2>The demo case — 16 power cycles and 5 sleeps, each a known tricky case</h2>
@@ -747,10 +748,10 @@ python -m unittest discover -s tests -v</pre>
 </tbody></table>
 <h2>Other checks done for this release</h2>
 <ul>
+  <li>References and the ID pop-up in Chrome — demo, an older case, both themes, the drawer: no script errors; ready in 113 ms on 268,066 events. Verdicts field by field as before on 268,066 events and on demo copies with 201 record gaps.</li>
   <li>Tabs on the 196,400-event case (8,400 power cycles), until painted: Power cycles 517 → 33 ms, Drive 367 → 33 ms, Apps &amp; updates 150 → 33 ms, a search 94 → 8 ms; timeline panning 154 → 24 ms a frame (35,793 → 4,144 nodes). The demo timeline draws pixel for pixel as before.</li>
   <li>The timeline in Chrome: on 196,400 events the line moves in 0.12 ms (the 1.7 MB index is in the browser) and unseen rows arrive in about 50 ms; a week-long range on 201,754 events (78,345 in it) lists the first 200 per log in 12 ms, 10 ms per move of its end.</li>
-  <li>Click, drag, ← → and Shift, Shift-drag and a range's ends, a row's message and data, the ± window, mark clicks and jump links — driven in a real browser, with no script errors.</li>
-  <li>Every tab and the detail drawer rendered in a real browser (headless Chrome) — the demo case, a case saved by the previous version and a busy case — with a check for script errors.</li>
+  <li>Every tab, the drawer and the timeline's clicks, drags, keys and ranges driven in headless Chrome — demo, older and busy cases — with no script errors.</li>
   <li>A busy case — crash loops of 351 and 251 events around one hard shutdown: each list opens at the 100 nearest, <i>Show more</i> loads the rest without moving the rows in view, and the drawer search finds events that were not loaded yet.</li>
   <li>A folder with Setup, Security and Partition logs next to the four: 3 skipped; Storport Health read as its own log.</li>
   <li>End-to-end through the real local server: analysis of a folder, the demo, every export, the event API, delete.</li>
@@ -758,11 +759,11 @@ python -m unittest discover -s tests -v</pre>
 </ul>
 <h2>Performance (analysis step, measured on a laptop)</h2>
 <div class="grid3">
-  <div class="tile"><b>0.2 s</b><span>19,640 events · 640 power cycles</span></div>
-  <div class="tile"><b>1.7 s</b><span>98,200 events · 3,200 power cycles</span></div>
-  <div class="tile"><b>4.7 s</b><span>196,400 events · 6,400 power cycles</span></div>
+  <div class="tile"><b>0.17 s</b><span>20,360 events · 640 power cycles</span></div>
+  <div class="tile"><b>0.85 s</b><span>101,800 events · 3,200 power cycles</span></div>
+  <div class="tile"><b>1.7 s</b><span>203,600 events · 6,400 power cycles (was 5.1 s)</span></div>
 </div>
-<p class="small">Reading <code>.evtx</code> with wevtutil adds time in proportion to file size (more with the messages; to be timed on Windows). Time grows faster than the event count (10× the events, about 20× the time) but stays in seconds for very large logs.</p>
+<p class="small">Time grows in step with the event count. 268,066 events (204 MB of XML): read in 4.5 s at 330 MB peak (was 7.0 s, 1.5 GB); a saved case opens in 0.1 s holding 7 MB (was 1.0 s, 727 MB). wevtutil adds time per file size.</p>
 
 <!-- ============================================================ 15 CONFIG -->
 <h1 id="config"><span class="n">15</span>Configuration and tuning</h1>
@@ -779,6 +780,7 @@ python -m unittest discover -s tests -v</pre>
   <tr><td class="k">critical_processes / critical_bugchecks</td><td>csrss, wininit, winlogon, lsass, smss, services · 0xEF, 0xF4</td></tr>
   <tr><td class="k">settings</td><td>Time windows and thresholds (below)</td></tr>
   <tr><td class="k">restart_words / poweroff_words</td><td>1074 shutdown-type words in many languages (English, German, French, Spanish, Italian, Dutch, Japanese, Chinese, Korean, Russian)</td></tr>
+  <tr><td class="k">references</td><td>Lines for <code>lens/reference.py</code> (what an ID means); same provider and ID replaces one</td></tr>
 </tbody></table>
 <div class="grid2">
   <table class="t compact">
@@ -962,7 +964,7 @@ summary = next(b.text <span class="k">for</span> b <span class="k">in</span> res
 
 <!-- ============================================================ APPENDIX A -->
 <h1 id="appx"><span class="n">A</span>Appendix: event reference</h1>
-<div class="lead">Every event LENS reads, as configured in <code>catalog.py</code> on <code>main</code>.</div>
+<div class="lead">Every event LENS reads, as configured in <code>catalog.py</code> on <code>main</code>. What every other ID means is in the References tab (<code>lens/reference.py</code>).</div>
 <h2>Power signals</h2>
 <table class="t compact">
   <thead><tr><th style="width:30%">Provider · ID</th><th>Meaning</th></tr></thead><tbody>
@@ -989,7 +991,7 @@ summary = next(b.text <span class="k">for</span> b <span class="k">in</span> res
   <tr><td>volmgr 161 · 46</td><td>Dump file creation failed · crash-dump init failed</td><td>error · warning</td></tr>
   <tr><td>WHEA-Logger 17 · 19 · 47</td><td>Corrected PCIe · hardware · memory error (platform)</td><td>warning</td></tr>
   <tr><td>WHEA-Logger 18 · 1</td><td>Fatal hardware error · WHEA hardware error (platform)</td><td>error</td></tr>
-  <tr><td>StorPort (every ID)</td><td>All Storport Operational and Health events; state from level (critical/error → error, warning → warning, else info)</td><td>by level</td></tr>
+  <tr><td>StorPort (every ID)</td><td>All Storport Operational and Health events, named by their meaning (549 first I/O error in a period, 527 miniport event…); state from level (critical/error → error, warning → warning, else info)</td><td>by level</td></tr>
   <tr><td>Other disk, stornvme, storahci, NVMe, Intel RST IDs</td><td>Any other event of a storage driver, at every level; Information is the drive's normal activity</td><td>by level</td></tr>
   <tr><td>Partition 1006</td><td>Disk inventory: DiskNumber, Model, SerialNumber, Revision, BusType, Capacity, ParentId</td><td>info</td></tr>
   <tr><td>Other storage providers</td><td>Any provider whose name contains stornvme, storahci, storport, nvme, iastor or disk, at warning or above</td><td>by level</td></tr>
@@ -1039,11 +1041,11 @@ summary = next(b.text <span class="k">for</span> b <span class="k">in</span> res
 <h1 id="cmds"><span class="n">C</span>Appendix: commands and files</h1>
 <h2>Run</h2>
 <pre class="code">git checkout main
-python run_lens.py                                    <span class="c"># UI at http://127.0.0.1:8765 (next free port if busy)</span>
+python run_lens.py                                    <span class="c"># UI at http://127.0.0.1:8765</span>
 python -m lens serve --port 8765 --no-browser
 python -m lens analyze &lt;folder or files&gt; --out report.html --tz 330
 python -m lens demo demo_logs
-python -m unittest discover -s tests -v              <span class="c"># 59 tests</span></pre>
+python -m unittest discover -s tests -v              <span class="c"># 72 tests</span></pre>
 <h2>Collect logs on the customer PC (administrator command prompt)</h2>
 <pre class="code">wevtutil epl System System.evtx
 wevtutil epl Application Application.evtx
@@ -1057,11 +1059,12 @@ lens/
   parser.py            .evtx (wevtutil / PowerShell / python-evtx) and .xml -&gt; events;
                        which logs a folder gives
   catalog.py           event IDs, weights, thresholds, drive vendors, software events  &lt;- tune here
+  reference.py         what each event ID means (References tab)
   engine.py            timeline, integrity, boots, sessions, classification, sleep,
                        drive identity + correlation, software trigger
   report.py            HTML / Excel / CSV / JSON export (no dependencies)
   server.py            local HTTP server + API
-  store.py             cases saved under ./cases
+  store.py             cases under ./cases: events in compressed blocks + index
   demo.py              synthetic demo logs with expected verdicts
 web/                   UI (vanilla HTML/CSS/JS, works offline)
 tests/                 unittest suite (demo scenario, rule tests, robustness test)
@@ -1069,10 +1072,9 @@ docs/                  team walkthrough (.pptx / .pdf), this reference and its s
 <h2>This release (main)</h2>
 <h3>Update of 26 November 2026</h3>
 <ul>
-  <li><b>The timeline line and a range:</b> the System, Application and Storport events within ± 5 s of the line, or between a range's start and end lines (<b>Range</b> or Shift-drag); 0.12 ms per move on 196,400 events.</li>
-  <li><b>What each event says</b> (Event Viewer's <i>General</i> text) is read, shown and searched; <b>the drive's normal activity</b> is kept — green ticks, <i>Show: Normal activity</i>; NTFS 98 "volume is healthy" is no longer an error.</li>
-  <li><b>Power cycles filters on one row</b>, the rest under <b>More</b>; <b>Apps &amp; updates</b> latest first; big cases stay quick — tables add rows as you scroll, busy lanes keep the most important mark per slot.</li>
-  <li><b>Whose account</b> asked for a shutdown shows under <i>What triggered it?</i>; exports leave names out. 7 new tests (59 total).</li>
+  <li><b>What each event ID means</b> — a click on any ID, a <b>References</b> tab with the case's IDs first; <b>faster, leaner</b>: analysis 3× faster on 200,000 events, an open case 7 MB not 727 MB; 13 new tests (72 total).</li>
+  <li><b>The timeline line and a range</b> list the three logs at a moment or between two lines; <b>what each event says</b> (Event Viewer's <i>General</i> text) is read and searched; <b>the drive's normal activity</b> is kept; NTFS 98 "healthy" is no longer an error.</li>
+  <li><b>Power cycles filters on one row</b>; <b>Apps &amp; updates</b> latest first; big cases stay quick; <b>whose account</b> asked for a shutdown, left out of exports. 7 new tests (59 total).</li>
 </ul>
 <h3>Earlier releases</h3>
 <p class="small"><b>2 November 2026:</b> <b>The trigger verdict stops at the power cycle before</b> — two power cycles minutes apart no longer share the same crashes; no stray scroll bar next to the tabs on Windows; 1 new test (52 total). <b>1 November 2026:</b> <b>App / update lists run cycle to cycle</b> — 100 nearest first, the rest on request, "Earlier, since …" in the reasons; <b>search by event ID</b> in every list and the drawer, and a clickable <b>Near</b> column; folders read only System, Application and Storport; the SMART check tab removed; 4 new tests (51 total). <b>October 2026:</b> <b>Which drive</b> — storage events tied to a drive, Samsung highlighted everywhere; <b>what triggered it</b> — 1074 decoding, updates, installers, OEM / IT tools, crashes and hangs, with confidence and the symptom-vs-cause check; the Apps &amp; updates tab and Excel software sheets; 27 new tests (47 total), a 16-power-cycle demo case.</p>
