@@ -67,7 +67,10 @@ Partition and Setup are not read from a folder: add them as files of their own.
 5. **Drive around every power cycle**: every storage event — all Storport events at every level, disk
    7/11/51/153/157, stornvme/storahci 129, NTFS, volmgr and WHEA — in the 60 s before power-off (or sleep) and the
    60 s after boot (or wake), each with its offset and key fields (SCSI opcodes decoded). The drive is labelled
-   *healthy / slow / reset / error / missing*; informational events are listed but don't change the label.
+   *healthy / slow / reset / error / missing*; Information events are the drive's **normal activity** — listed, drawn as
+   thin green ticks on the timeline's drive lanes and kept in the Drive tab (*Show: Normal activity*), but they don't
+   change the label. NTFS 98 logged as Information ("Volume C: is healthy", at every boot) is normal activity; logged
+   as an error it is "volume needs repair".
 6. **Did the drive cause it?** For hard shutdowns and undetermined power cycles: **Likely** (drive reset, error or
    surprise removal before power-off, or a storage crash code such as 0x7A), **Possibly** (slow I/O or warnings,
    WHEA-only errors, or a crash code such as 0x9F), **No drive evidence** (drive quiet before power-off) or
@@ -119,9 +122,16 @@ Partition and Setup are not read from a folder: add them as files of their own.
     an event and to the one after it; click either to open it.
 11. **The timeline line**: drag the black line on the Timeline (or click anywhere, or step with ← → — Shift steps a
     power cycle) and the System, Application and Storport events within ± 5 s (1–60 s to choose) are listed under it,
-    each with its offset from the line and its log time to the millisecond. The browser loads every event's time and
-    log once per case (`/api/cases/<id>/index`), so the line moves with no round trip; what each event says comes
-    from `/api/cases/<id>/rows` 256 at a time and is kept.
+    each with its offset from the line and its log time to the millisecond. **Range** (or Shift-drag on the timeline)
+    gives a start and an end line instead: every event between them is listed, 200 more each time a list is scrolled
+    to its end, and ← → move the range by its own length. The browser loads every event's time and log once per case
+    (`/api/cases/<id>/index`), so the lines move with no round trip; what each event says comes from
+    `/api/cases/<id>/rows` 256 at a time (`?ids=` for the ones a range lists) and is kept.
+12. **What each event says**: on Windows every event is read with its message — the text Event Viewer shows on the
+    *General* tab (`wevtutil /f:RenderedXml`, worded by the analysing PC's Windows; Event Viewer's *Save as XML* exports
+    carry it too). The timeline rows show its first line, a click opens all of it above the event's fields, and
+    search finds words in it. A provider that PC does not have, and python-evtx outside Windows, give no message; the
+    Data quality tab counts the events read with one per file.
 
 All event IDs, weights, vendor rules and thresholds live in `lens/catalog.py`. Override any of them with `lens_config.json`
 next to `run_lens.py`, e.g.
@@ -135,7 +145,8 @@ next to `run_lens.py`, e.g.
 ```
 run_lens.py            start the UI
 lens/
-  parser.py            .evtx (wevtutil / PowerShell / python-evtx) and .xml -> events; which logs a folder gives
+  parser.py            .evtx (wevtutil / PowerShell / python-evtx) and .xml -> events with their messages;
+                       which logs a folder gives
   catalog.py           event IDs, weights, thresholds, drive vendors, software events  <- tune here
   engine.py            timeline, integrity, boots, sessions, classification, sleep, drive identity +
                        correlation, software trigger

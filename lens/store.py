@@ -112,19 +112,31 @@ def event_index(case_id: str) -> dict:
 
 
 def event_rows(case_id: str, i0: int, i1: int) -> List[dict]:
-    """Events i0 .. i1-1 (an event's index is its place in time order), short: what each one is and says."""
+    """Events i0 .. i1-1 (an event's index is its place in time order), short: what each one is and says - the app or
+    update it names, else the first line of its message (Event Viewer's General text), else its key fields."""
+    return [_row(e) for e in load_events(case_id)[max(0, i0):max(0, i1)]]
+
+
+def event_rows_at(case_id: str, ids: List[int]) -> List[dict]:
+    """The same for the events with these indexes - a range's lists show events that can be far apart."""
+    evs = load_events(case_id)
+    return [_row(evs[i]) for i in ids if 0 <= i < len(evs)]
+
+
+def _row(e: dict) -> dict:
     if not _labels:   # "Unclean shutdown reported (Kernel-Power 41)": the row shows the ID and provider already
         _labels.update({k: re.sub(r"\s*\([^()]*\)$", "", v) for k, v in catalog.load_config()["signal_labels"].items()})
-    out = []
-    for e in load_events(case_id)[max(0, i0):max(0, i1)]:
-        sw, st = e.get("software"), e.get("storage")
-        tag = sw or st or {}
-        text = " · ".join(x for x in (tag.get("subject"), tag.get("detail")) if x) if sw else ""
-        out.append({"idx": e["idx"], "time": e["time"], "eid": e["eid"], "level": e.get("level", 4),
-                    "provider": e["provider"], "channel": e["channel"],
-                    "label": _labels.get(e.get("signal")) or tag.get("label") or "",
-                    "text": text or _fields(e.get("data") or {}, 6 if st else 4), "state": tag.get("state") or ""})
-    return out
+    sw, st = e.get("software"), e.get("storage")
+    tag, msg = sw or st or {}, e.get("msg") or ""
+    text = " · ".join(x for x in (tag.get("subject"), tag.get("detail")) if x) if sw else ""
+    row = {"idx": e["idx"], "time": e["time"], "eid": e["eid"], "level": e.get("level", 4),
+           "provider": e["provider"], "channel": e["channel"],
+           "label": _labels.get(e.get("signal")) or tag.get("label") or "",
+           "text": text or msg.split("\n", 1)[0][:300] or _fields(e.get("data") or {}, 6 if st else 4),
+           "state": tag.get("state") or ""}
+    if msg:   # the start of it for the row's tooltip; the whole message comes with the event's data
+        row["msg"] = msg[:600]
+    return row
 
 
 def list_cases() -> List[dict]:

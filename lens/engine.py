@@ -264,12 +264,14 @@ class Analyzer:
         for name, pairs in self.cfg["signals"].items():
             for prov, eid in pairs:
                 sig[(prov.lower(), int(eid))] = name
-        exact, wild = {}, {}
-        for prov, eid, label, state in self.cfg["storage_events"]:
+        exact, wild, normal = {}, {}, {}
+        for prov, eid, label, state, *info in self.cfg["storage_events"]:
             if eid == "*":
                 wild[prov.lower()] = (label, state)
             else:
                 exact[(prov.lower(), int(eid))] = (label, state)
+                if info:    # the same ID logged as Information: normal activity (Ntfs 98 "Volume C: is healthy")
+                    normal[(prov.lower(), int(eid))] = (info[0], "info")
         hints = [h.lower() for h in self.cfg["storage_provider_hints"]]
         sw = {(prov.lower(), int(eid)): (label, group, kind)
               for prov, eid, label, group, kind in self.cfg.get("software_events", [])}
@@ -278,12 +280,12 @@ class Analyzer:
             e.signal = sig.get((p, e.eid))
             if (p, e.eid) in sw:
                 e.software = self._software_tag(e, *sw[(p, e.eid)])
-            hit = exact.get((p, e.eid))
+            hit = (e.level in (0, 4) and normal.get((p, e.eid))) or exact.get((p, e.eid))
             if hit is None and p in wild:
                 hit = (f"{wild[p][0]} {e.eid}", wild[p][1])
             if hit is None and channel_kind(e.channel) == "storport":
                 hit = (f"Storport event {e.eid}", "auto")
-            if hit is None and e.level in (1, 2, 3) and any(h in p for h in hints):
+            if hit is None and any(h in p for h in hints):
                 hit = (f"{e.provider} {e.eid}", "auto")
             if hit:
                 label, state = hit
@@ -1445,6 +1447,8 @@ class Analyzer:
         hl_set = ("yes", "probably")
         triggers = Counter(t["software"]["trigger"] for t in self.transitions)
         bad_storage = [e for e in self.storage if e.storage["state"] != "info"]
+        # every storage event, normal activity too; problems first if the cap is hit, then back in time order
+        kept = sorted(sorted(self.storage, key=lambda e: e.storage["state"] == "info")[:5000], key=lambda e: e.idx)
         return {
             "lens_version": __version__,
             "generated": iso(datetime.now(timezone.utc)),
@@ -1484,7 +1488,7 @@ class Analyzer:
             "sessions": self.sessions,
             "storage_events": [{"idx": e.idx, "time": iso(e.time), "provider": e.provider, "eid": e.eid,
                                 "channel": e.channel, "label": e.storage["label"], "state": e.storage["state"],
-                                "level": e.level, **self._dev_fields(e)} for e in bad_storage][:5000],
+                                "level": e.level, **self._dev_fields(e)} for e in kept],
             # problems first if the cap is hit, then back in time order
             "software_events": [self._sw_ev(e) for e in sorted(
                 sorted(self.software, key=lambda e: e.software["state"] == "info")[:5000], key=lambda e: e.idx)],

@@ -132,6 +132,8 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 4 and parts[1] == "cases" and parts[3] == "index":
                 return self._json(store.event_index(parts[2]))
             if len(parts) == 4 and parts[1] == "cases" and parts[3] == "rows":
+                if "ids" in q:   # a range: the events it lists, wherever they are
+                    return self._json(store.event_rows_at(parts[2], [int(i) for i in q["ids"].split(",") if i][:4096]))
                 i0 = int(q.get("from", 0))
                 return self._json(store.event_rows(parts[2], i0, min(int(q.get("to", i0 + 256)), i0 + 4096)))
             if len(parts) == 4 and parts[1] == "cases" and parts[3].startswith("export."):
@@ -201,7 +203,7 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 if tag and not e.get(tag):
                     continue
-                if text and text not in f"{e['provider']} {e['eid']} {e['channel']} {json.dumps(e.get('data', {}))}".lower():
+                if text and text not in f"{e['provider']} {e['eid']} {e['channel']} {e.get('msg', '')} {json.dumps(e.get('data', {}))}".lower():
                     continue
                 sel.append({**{k: e[k] for k in ("idx", "time", "provider", "eid", "channel")}, **e[tag]} if tag else e)
                 if not last and len(sel) >= limit:

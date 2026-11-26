@@ -4,7 +4,10 @@ Supported inputs
   * .evtx  - on Windows via the built-in `wevtutil` (no install needed),
              falling back to PowerShell Get-WinEvent; on other OSes via the
              optional `python-evtx` package.
-  * .xml   - events exported as XML (wevtutil qe ... /f:xml, or LENS demo logs).
+  * .xml   - events exported as XML (wevtutil qe ... /f:xml, Event Viewer's
+             "Save as XML", or LENS demo logs).
+On Windows each event also gets its message - the words Event Viewer shows on
+the General tab - rendered by this PC's Windows; python-evtx cannot render them.
 A path may be a file or a folder (searched recursively). From a folder only the
 FOLDER_LOGS are read; a file given by itself is always read.
 """
@@ -21,6 +24,7 @@ from typing import Iterable, List, Tuple
 from .models import Event, parse_time
 
 _INVALID_XML = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+MSG_MAX = 8000
 SUPPORTED = (".evtx", ".xml")
 # A claim folder - often a copy of C:\Windows\System32\winevt\Logs - holds hundreds of logs; only these are read
 # from it. winevt\Logs names each file after its channel, with %4 for "/".
@@ -32,9 +36,17 @@ def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
+def _message(text: str | None) -> str:
+    """The General text, tidied: Windows line ends, trailing spaces and the invisible direction marks before times."""
+    s = (text or "").replace("\r\n", "\n").replace("\r", "\n").replace("\u200e", "").replace("\u200f", "")
+    s = re.sub(r"\n{3,}", "\n\n", "\n".join(line.rstrip() for line in s.split("\n"))).strip()
+    return s[:MSG_MAX]
+
+
 def _event_from_elem(ev: ET.Element, source: str) -> Event | None:
     system = None
     payload: dict = {}
+    msg = ""
     for child in ev:
         name = _local(child.tag)
         if name == "System":
@@ -55,6 +67,9 @@ def _event_from_elem(ev: ET.Element, source: str) -> Event | None:
                     txt = (leaf.text or "").strip()
                     if txt:
                         payload[_local(leaf.tag)] = txt
+        elif name == "RenderingInfo":     # RenderedXml / Event Viewer's "Save as XML": the message in words
+            m = next((r for r in child if _local(r.tag) == "Message"), None)
+            msg = _message(m.text if m is not None else "")
     if system is None:
         return None
     prov, eid, rid, level, chan, comp, t = "", 0, None, 4, "", "", None
@@ -91,22 +106,27 @@ def _event_from_elem(ev: ET.Element, source: str) -> Event | None:
     if t is None:
         return None
     return Event(time=t, channel=chan, provider=prov, eid=eid, rid=rid, level=level,
-                 computer=comp, data=payload, source=os.path.basename(source))
+                 computer=comp, data=payload, msg=msg, source=os.path.basename(source))
 
 
-def parse_xml_text(text: str, source: str) -> List[Event]:
-    """Parse a blob of XML containing <Event> elements (with or without a root)."""
+def parse_xml_text(text: str, source: str, partial: bool = False) -> List[Event]:
+    """Parse a blob of XML containing <Event> elements (with or without a root).
+    partial: the text may stop part way - keep the events read up to there."""
     text = _INVALID_XML.sub("", text)
     text = re.sub(r"^\s*<\?xml[^>]*\?>", "", text)
     if not re.match(r"\s*<Events[\s>]", text):
         text = "<Events>" + text + "</Events>"
     out: List[Event] = []
-    for _, elem in ET.iterparse(io.StringIO(text), events=("end",)):
-        if _local(elem.tag) == "Event":
-            e = _event_from_elem(elem, source)
-            if e:
-                out.append(e)
-            elem.clear()
+    try:
+        for _, elem in ET.iterparse(io.StringIO(text), events=("end",)):
+            if _local(elem.tag) == "Event":
+                e = _event_from_elem(elem, source)
+                if e:
+                    out.append(e)
+                elem.clear()
+    except ET.ParseError:
+        if not partial:
+            raise
     return out
 
 
@@ -120,16 +140,32 @@ def _decode(raw: bytes) -> str:
         return raw.decode(locale.getpreferredencoding(False) or "cp1252", errors="replace")
 
 
+def _wevtutil(exe: str, path: str, fmt: str) -> Tuple[str, str]:
+    """(output, error) of wevtutil qe; error is "" when it read the whole log."""
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    proc = subprocess.run([exe, "qe", path, "/lf:true", f"/f:{fmt}", "/e:Events"],
+                          capture_output=True, creationflags=flags)
+    err = "" if proc.returncode == 0 else _decode(proc.stderr).strip() or f"wevtutil exit {proc.returncode}"
+    return _decode(proc.stdout), err
+
+
 def _parse_evtx_wevtutil(path: str) -> List[Event]:
     exe = shutil.which("wevtutil")
     if not exe:
         raise RuntimeError("wevtutil not found")
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    proc = subprocess.run([exe, "qe", path, "/lf:true", "/f:xml", "/e:Events"],
-                          capture_output=True, creationflags=flags)
-    if proc.returncode != 0:
-        raise RuntimeError(_decode(proc.stderr).strip() or f"wevtutil exit {proc.returncode}")
-    return parse_xml_text(_decode(proc.stdout), path)
+    # RenderedXml adds each event's message, worded by this PC's Windows (empty for a provider it does not have)
+    text, err = _wevtutil(exe, path, "RenderedXml")
+    if not err:
+        return parse_xml_text(text, path)
+    # it stopped part way (a provider whose messages Windows could not load): read every event, keep the words it got
+    raw, err = _wevtutil(exe, path, "xml")
+    if err:
+        raise RuntimeError(err)
+    events = parse_xml_text(raw, path)
+    words = {e.rid: e.msg for e in parse_xml_text(text, path, partial=True) if e.msg and e.rid is not None}
+    for e in events:
+        e.msg = words.get(e.rid, "")
+    return events
 
 
 def _parse_evtx_powershell(path: str) -> List[Event]:
@@ -137,9 +173,12 @@ def _parse_evtx_powershell(path: str) -> List[Event]:
     if not exe:
         raise RuntimeError("PowerShell not found")
     p = path.replace("'", "''")
+    # each event's XML with its message added the way RenderedXml carries it
     script = ("[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
               f"Get-WinEvent -Path '{p}' -Oldest -ErrorAction SilentlyContinue | "
-              "ForEach-Object { $_.ToXml() }")
+              "ForEach-Object { $x = $_.ToXml(); $m = $null; try { $m = $_.Message } catch { }; "
+              "if ($m) { $x = $x.Substring(0, $x.LastIndexOf('</Event>')) + '<RenderingInfo><Message>' + "
+              "[Security.SecurityElement]::Escape($m) + '</Message></RenderingInfo></Event>' }; $x }")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     proc = subprocess.run([exe, "-NoProfile", "-NonInteractive", "-Command", script],
                           capture_output=True, creationflags=flags)
@@ -228,6 +267,7 @@ def load(paths: Iterable[str]) -> Tuple[List[Event], List[dict], List[str]]:
             else:
                 evs, info["reader"] = parse_evtx(f)
             info["events"] = len(evs)
+            info["messages"] = sum(1 for e in evs if e.msg)
             info["channels"] = sorted({e.channel for e in evs})
             events.extend(evs)
         except Exception as exc:

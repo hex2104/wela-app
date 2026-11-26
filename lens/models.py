@@ -16,6 +16,7 @@ class Event:
     level: int                     # 1 critical, 2 error, 3 warning, 4 info, 0 always
     computer: str = ""
     data: Dict[str, str] = field(default_factory=dict)
+    msg: str = ""                  # what the event says in words (Event Viewer's General tab), when Windows rendered it
     source: str = ""               # file it came from
     idx: int = 0                   # global index after sorting
     signal: Optional[str] = None   # power signal tag (set by engine)
@@ -44,6 +45,8 @@ class Event:
             d["software"] = self.software
         if full:
             d["data"] = self.data
+            if self.msg:
+                d["msg"] = self.msg
             d["computer"] = self.computer
             d["source"] = self.source
         return d
@@ -59,6 +62,7 @@ class Event:
             level=int(d.get("level", 4) or 4),
             computer=d.get("computer", ""),
             data=d.get("data") or {},
+            msg=d.get("msg") or "",
             source=d.get("source", ""),
             idx=d.get("idx", 0),
         )

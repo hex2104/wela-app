@@ -292,7 +292,7 @@ function renderCase() {
   const dq = integ.missing_channels.length + integ.record_gaps.length + integ.clears.length + integ.time_changes.length +
     integ.unreadable_files.length + integ.clock_backwards.length;
   const tabs = [["overview", "Overview"], ["timeline", "Timeline"], ["cycles", "Power cycles", c.items.length],
-    ["drive", "Drive", c.storage_events.length], ["software", "Apps & updates", n.software_events],
+    ["drive", "Drive", c.storage_events.filter((e) => e.state !== "info").length], ["software", "Apps & updates", n.software_events],
     ["quality", "Data quality", dq, dq > 0]];
   $("#main").innerHTML = `
     <div class="case-head">
@@ -352,7 +352,7 @@ function tabOverview() {
   const review = c.items.filter((x) => x.needs_review).slice(0, 7);
   const t0 = c.coverage.start_ts, t1 = c.coverage.end_ts, span = Math.max(1, t1 - t0);
   const st = Object.entries(c.storage_counts).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  const maxSt = Math.max(1, ...st.map((x) => x[1]));
+  const maxSt = Math.max(1, ...st.map((x) => x[1])), nSt = c.storage_events.filter((e) => e.state !== "info").length;
   const suspects = c.items.filter(isSuspect).slice(0, 6);
   const dstats = [["likely", "Likely", "drive"], ["possible", "Possibly", "drive"], ["no_evidence", "No drive evidence"], ["unknown", "Can't tell"]];
   const sb = Object.entries(c.software_breakdown || {}).sort((a, b) => b[1] - a[1]);
@@ -395,10 +395,10 @@ function tabOverview() {
           <div class="cov" style="margin-top:2px"><span></span><div class="axis"><span>${fmt(c.coverage.start, false)}</span><span>${fmt(c.coverage.end, false)}</span></div></div>
           ${c.integrity.missing_channels.length ? `<div class="flagbox warn" style="margin-top:10px">${ICON.warn}<span>Missing: ${esc(c.integrity.missing_channels.join(", "))} log — related checks are limited.</span></div>` : ""}
         </div></div>
-      <div class="card"><div class="card-h"><h3>Storage events</h3><span class="muted small">${c.storage_events.length} warning/error events</span></div>
+      <div class="card"><div class="card-h"><h3>Storage events</h3><span class="muted small">${nSt} warning/error events${nSt < c.storage_events.length ? ` · ${(c.storage_events.length - nSt).toLocaleString()} normal activity` : ""}</span></div>
         <div class="card-b">${st.length ? st.map(([k, v]) => `<div class="hbar"><span>${esc(k)}</span><div class="track"><b style="width:${(v / maxSt) * 100}%;background:var(--warn)"></b></div><span class="n">${v}</span></div>`).join("")
           : '<div class="muted">No storage warnings or errors logged.</div>'}
-          ${n.hl_events !== undefined && c.storage_events.length ? `<div class="muted small" style="margin-top:10px"><span class="chip sam">${esc(HV())}</span> ${n.hl_events} of ${c.storage_events.length} warning / error events are on the ${esc(HV())} drive</div>` : ""}
+          ${n.hl_events !== undefined && nSt ? `<div class="muted small" style="margin-top:10px"><span class="chip sam">${esc(HV())}</span> ${n.hl_events} of ${nSt} warning / error events are on the ${esc(HV())} drive</div>` : ""}
           ${disk ? `<div class="muted small" style="margin-top:12px">Drive: <b style="color:var(--ink)">${esc(disk.Model || "")}</b>${disk.highlight ? ` <span class="chip sam">${esc(HV())}</span>` : ""} · FW ${esc(disk.Revision || disk.FirmwareRevision || "?")} · SN ${esc(disk.SerialNumber || "?")}${c.disks.length > 1 ? ` · +${c.disks.length - 1} more` : ""}</div>` : ""}
         </div></div>
       <div class="card"><div class="card-h"><h3>Apps &amp; updates</h3><span class="muted small">${n.software_events === undefined ? "" : `${n.software_events} crash / hang / failure / restart events`}</span></div>
@@ -639,10 +639,10 @@ async function loadRaw(idx, scroll) {
   try {
     const evs = await api(`/api/cases/${encodeURIComponent(S.c.id)}/events?around=${idx}&n=20`);
     box.innerHTML = `<div class="card" style="box-shadow:none"><div class="tbl-wrap" style="max-height:420px"><table class="t raw"><thead><tr><th>Time</th><th>Log</th><th>Provider</th><th>ID</th></tr></thead><tbody>
-      ${evs.map((e) => `<tr class="click ${String(e.idx) === String(idx) ? "hl" : ""}" data-i="${e.idx}"><td>${fmt(e.time).slice(5)}</td><td>${esc(shortChan(e.channel))}</td>
+      ${evs.map((e) => `<tr class="click ${String(e.idx) === String(idx) ? "hl" : ""}" data-i="${e.idx}" title="${esc((e.msg || "").slice(0, 600))}"><td>${fmt(e.time).slice(5)}</td><td>${esc(shortChan(e.channel))}</td>
         <td>${esc(e.provider.replace("Microsoft-Windows-", ""))}</td><td><b>${e.eid}</b></td></tr>
-        <tr class="dat" data-for="${e.idx}" style="display:none"><td colspan="4"><pre class="data">${esc(JSON.stringify(e.data, null, 1))}</pre></td></tr>`).join("")}
-      </tbody></table></div></div><div class="muted small" style="margin-top:6px">Click a row to see its event data. Highlighted row is the selected evidence.</div>`;
+        <tr class="dat" data-for="${e.idx}" style="display:none"><td colspan="4">${e.msg ? `<div class="lmsg">${esc(e.msg)}</div>` : ""}<pre class="data">${esc(JSON.stringify(e.data, null, 1))}</pre></td></tr>`).join("")}
+      </tbody></table></div></div><div class="muted small" style="margin-top:6px">Click a row to see what the event says and its data. Highlighted row is the selected evidence.</div>`;
     $$("tr.click", box).forEach((r) => (r.onclick = () => { const d = $(`tr.dat[data-for="${r.dataset.i}"]`, box); d.style.display = d.style.display === "none" ? "" : "none"; }));
     $("tr.hl", box)?.scrollIntoView({ block: "center" });
   } catch (e) { box.innerHTML = `<div class="err" style="display:block">${esc(e.message)}</div>`; }
@@ -663,20 +663,24 @@ function tabTimeline() {
   /* one card: the timeline, then the logs at its line, so both fit on one screen; the legend opens on hover */
   $("#tabBody").innerHTML = `
     <div class="card"><div class="card-h"><h3>Timeline</h3>
-      <div class="tl-tools"><span class="muted small">Scroll to zoom · drag to pan · click or drag the line to read the logs · ← → next event</span>
+      <div class="tl-tools"><span class="muted small">Scroll to zoom · drag to pan · click or drag the line to read the logs · Shift-drag for a range · ← → next event</span>
         <span class="menu tl-leg"><button class="btn">Legend</button><div class="menu-pop legend">
           <span><i style="background:var(--accent);opacity:.35"></i>Powered on (boot session)</span>
           ${Object.entries(TYPES).map(([k, v]) => `<span><i style="background:${v.color}"></i>${v.label}</span>`).join("")}
           <span><i style="background:var(--warn)"></i>Storage / app warning</span><span><i style="background:var(--bad)"></i>Storage error / reset, app crash</span>
+          <span><i style="background:var(--ok);opacity:.6"></i>Drive normal activity</span>
           <span><i style="background:var(--sam-soft);box-shadow:inset 0 0 0 1.5px var(--sam)"></i>${esc(HV())} drive lane</span>
           <span><i style="background:var(--accent)"></i>Update / install / restart</span>
-          <span><i style="background:var(--ink)"></i>The line: its logs are listed below</span></div></span>
+          <span><i style="background:var(--ink)"></i>The line, or a range's start and end: their logs are listed below</span></div></span>
         <button class="btn" id="zin">+</button><button class="btn" id="zout">−</button><button class="btn" id="zfit">Fit</button></div></div>
       <div class="card-b"><div class="tl-wrap" id="tlwrap"><svg id="tlsvg"></svg><div class="tl-band" id="tlband"></div>
-        <div class="tl-cur" id="tlcur"><div class="grab"></div><span class="lbl" id="tlcurl" title="Drag to move through time"></span></div></div>
-      <div class="lc-bar"><h3>Logs at the line</h3><span class="muted small" id="lcT"></span><span class="spacer"></span>
-        <button class="btn" id="lcPrev" title="Previous event (←) · Shift: previous power cycle">‹</button><button class="btn" id="lcNext" title="Next event (→) · Shift: next power cycle">›</button>
-        <select id="lcW" title="How far either side of the line">${[1, 5, 10, 30, 60].map((v) => `<option value="${v}" ${v === S.tl.win ? "selected" : ""}>± ${v} s</option>`).join("")}</select></div>
+        <div class="tl-cur" id="tlcur"><div class="grab"></div><span class="lbl" title="Drag to move through time"></span></div>
+        <div class="tl-cur" id="tlA" data-end="a"><div class="grab"></div><span class="lbl" title="Start of the range: drag to move it"></span></div>
+        <div class="tl-cur" id="tlB" data-end="b"><div class="grab"></div><span class="lbl" title="End of the range: drag to move it"></span></div></div>
+      <div class="lc-bar"><h3 id="lcH">Logs at the line</h3><span class="muted small" id="lcT"></span><span class="spacer"></span>
+        <button class="btn" id="lcPrev">‹</button><button class="btn" id="lcNext">›</button>
+        <select id="lcW" title="How far either side of the line">${[1, 5, 10, 30, 60].map((v) => `<option value="${v}" ${v === S.tl.win ? "selected" : ""}>± ${v} s</option>`).join("")}</select>
+        <button class="btn" id="lcR" title="Every log between a start and an end line">Range</button></div>
       <div class="lc-grid" id="lcGrid">${LOGS.map(([k, n]) => `<div class="lc"><div class="lc-h"><b>${n}</b><span class="muted small" id="lcn-${k}"></span></div><div class="lc-b" id="lc-${k}"></div></div>`).join("")}</div></div></div>`;
   drawTimeline();
   const svg = $("#tlsvg");
@@ -689,17 +693,19 @@ function tabTimeline() {
   /* one set of listeners for every mark: tooltips, clicks, and a drag to pan (a press that does not move puts the line there) */
   const tt = $("#tooltip");
   let drag = null;
-  svg.addEventListener("mousedown", (e) => {
+  svg.addEventListener("mousedown", (e) => {   // with Shift a drag draws a range instead
     if (e.target.closest(".mk, .ctxe")) return;
-    drag = { x: e.clientX, t0: S.tl.t0, t1: S.tl.t1, moved: false }; svg.classList.add("drag");
+    drag = { x: e.clientX, t0: S.tl.t0, t1: S.tl.t1, moved: false, from: e.shiftKey ? tlT(e.clientX) : null };
+    if (!e.shiftKey) svg.classList.add("drag");
   });
   window.onmouseup = (e) => {
-    if (drag && !drag.moved && $("#tlsvg")) setCursor(tlT(e.clientX), { snap: true });
+    if (drag && !drag.moved && $("#tlsvg")) clickAt(tlT(e.clientX));
     drag = null; $("#tlsvg")?.classList.remove("drag");
   };
   svg.addEventListener("mousemove", (e) => {
     if (drag && (drag.moved || Math.abs(e.clientX - drag.x) >= 4)) {
       drag.moved = true; tt.style.opacity = 0;
+      if (drag.from != null) { const t = tlT(e.clientX); return setRange({ a: Math.min(drag.from, t), b: Math.max(drag.from, t) + 1e-3 }); }
       const r = svg.getBoundingClientRect(), dt = ((drag.x - e.clientX) / (r.width - TL_LW)) * (drag.t1 - drag.t0);
       S.tl.t0 = drag.t0 + dt; S.tl.t1 = drag.t1 + dt; queueDraw();
       return;
@@ -713,30 +719,36 @@ function tabTimeline() {
   svg.addEventListener("click", (e) => {
     const n = e.target.closest(".mk, .ctxe"); if (!n) return;
     tt.style.opacity = 0;
-    if (n.classList.contains("ctxe")) return setCursor(+n.dataset.t);
-    const it = c.items.find((x) => x.id === n.dataset.id); if (it?.time_ts) setCursor(it.time_ts);
+    if (n.classList.contains("ctxe")) return moveTo(+n.dataset.t);
+    const it = c.items.find((x) => x.id === n.dataset.id); if (it?.time_ts) moveTo(it.time_ts);
     openDetail(n.dataset.id);
   });
-  const cur = $("#tlcur");
-  cur.addEventListener("pointerdown", (e) => {   // the drag listens on the window, so a fast move does not lose the line
-    e.preventDefault(); cur.classList.add("on"); $("#tooltip").style.opacity = 0;
-    const move = (ev) => setCursor(tlT(ev.clientX), { snap: true });
+  $$(".tl-cur", $("#tlwrap")).forEach((cur) => cur.addEventListener("pointerdown", (e) => {   // the line, or a range's start or end
+    e.preventDefault(); cur.classList.add("on"); $("#tooltip").style.opacity = 0;   // the drag listens on the window, so a fast move does not lose it
+    const move = (ev) => (cur.dataset.end ? moveEnd(cur.dataset.end, tlT(ev.clientX)) : setCursor(tlT(ev.clientX), { snap: true }));
     const up = () => { removeEventListener("pointermove", move); removeEventListener("pointerup", up); removeEventListener("pointercancel", up); cur.classList.remove("on"); };
     addEventListener("pointermove", move); addEventListener("pointerup", up); addEventListener("pointercancel", up);
-  });
+  }));
   $("#zin").onclick = () => zoomAt(0.5, 0.6); $("#zout").onclick = () => zoomAt(0.5, 1.6);
   $("#zfit").onclick = () => { S.tl.t0 = null; tabTimeline(); };
   $("#lcPrev").onclick = (e) => stepCursor(-1, e.shiftKey); $("#lcNext").onclick = (e) => stepCursor(1, e.shiftKey);
   $("#lcW").onchange = (e) => { S.tl.win = +e.target.value; store.set("tlwin", S.tl.win); placeCursor(); renderLogs(); };
+  $("#lcR").onclick = () => setRange(S.tl.range ? null : startRange());
+  /* a range lists from its start: the next rows come as a list is scrolled to its end */
+  $$(".lc-b").forEach((box) => box.addEventListener("scroll", () => {
+    if (!S.tl.range || box._more || !box.querySelector(".lshow") || box.scrollTop + box.clientHeight < box.scrollHeight - 80) return;
+    box._more = true; box._n += LOG_MAX; queueLogs();
+  }));
   $("#lcGrid").onclick = (ev) => {
-    const j = ev.target.closest(".ljump"); if (j) return setCursor(+j.dataset.t, { follow: true });
+    const j = ev.target.closest(".ljump"); if (j) return moveTo(+j.dataset.t);
+    const s = ev.target.closest(".lshow"); if (s) { s.closest(".lc-b")._n += LOG_MAX; return renderLogs(); }
     const r = ev.target.closest(".lr"), ix = S.ix; if (!r || !ix) return;
     const i = +r.dataset.idx;
     if (ix.open.has(i)) ix.open.delete(i); else { ix.open.add(i); if (!ix.full.has(i)) loadFull(ix, i); }
     renderLogs();
   };
   window.onresize = () => { if (S.tab === "timeline") { drawTimeline(); sizeLogs(); } };
-  sizeLogs(); renderLogs();
+  rangeBar(); sizeLogs(); renderLogs();
   loadIndex().then(renderLogs).catch((e) => LOGS.forEach(([k]) => { const b = $(`#lc-${k}`); if (b) b.innerHTML = `<div class="lempty">${esc(e.message)}</div>`; }));
 }
 function zoomAt(frac, k) {
@@ -822,12 +834,15 @@ function drawTimeline() {
     out.push(`<g class="hit mk" data-id="${it.id}" data-tip="${esc(tipOf(it) + more(n))}" transform="translate(${x(a)},${cy})"><circle r="${it.needs_review ? 8 : 7}" fill="${col}" stroke="var(--panel)" stroke-width="2"/>
       ${it.needs_review ? '<circle r="11" fill="none" stroke="var(--warn)" stroke-width="1.5"/>' : ""}</g>`);
   });
-  // drive events: the highlighted vendor's drive on its own lane; the worst state wins its pixel
-  const SEV = { missing: 5, reset: 4, error: 3, slow: 2, warning: 1 };
-  bin(c.storage_events.filter((e) => vis(T(e), T(e))), (e) => x(T(e)) + (isHl(e.hl) ? 3e6 : 0), (e) => (SEV[e.state] || 0) * 2 + (e.hl === "yes" ? 1 : 0)).forEach(({ m: e, n }) => {
-    const t = T(e), col = STATE_COLOR[e.state] || "var(--warn)", l = isHl(e.hl) ? L.hl : L.drive;
+  // drive events: the highlighted vendor's drive on its own lane; the worst state wins its pixel, and normal activity
+  // (Information events) is a thin green tick drawn under the problems
+  const SEV = { missing: 5, reset: 4, error: 3, slow: 2, warning: 1 }, sev = (e) => (SEV[e.state] || 0) * 2 + (e.hl === "yes" ? 1 : 0);
+  bin(c.storage_events.filter((e) => vis(T(e), T(e))), (e) => x(T(e)) + (isHl(e.hl) ? 3e6 : 0), sev).sort((p, q) => sev(p.m) - sev(q.m)).forEach(({ m: e, n }) => {
+    const t = T(e), ok = e.state === "info", col = ok ? "var(--ok)" : STATE_COLOR[e.state] || "var(--warn)", l = isHl(e.hl) ? L.hl : L.drive;
     const who = e.dev_basis !== undefined ? `<br>${esc(e.dev || "drive not identified")}${e.hl === "probably" ? " (probably)" : ""}` : "";
-    out.push(`<rect class="hit ctxe" data-t="${t}" data-tip="${esc(`<b>${e.eid} · ${esc(e.label)}</b>${esc(e.provider)}<br>${fmt(e.time)}${who}${more(n)}`)}" x="${x(t) - 2}" y="${l.y + 4}" width="4" height="${l.h - 8}" rx="1.5" fill="${col}" ${e.hl === "probably" ? 'opacity=".6"' : ""}/>`);
+    const tip = `<b>${e.eid} · ${esc(e.label)}</b>${esc(e.provider)}${ok ? " · normal activity" : ""}<br>${fmt(e.time)}${who}${more(n)}`;
+    out.push(ok ? `<rect class="hit ctxe" data-t="${t}" data-tip="${esc(tip)}" x="${x(t) - 1}" y="${l.y + 7}" width="2" height="${l.h - 14}" fill="${col}" opacity=".6"/>`
+      : `<rect class="hit ctxe" data-t="${t}" data-tip="${esc(tip)}" x="${x(t) - 2}" y="${l.y + 4}" width="4" height="${l.h - 8}" rx="1.5" fill="${col}" ${e.hl === "probably" ? 'opacity=".6"' : ""}/>`);
   });
   // apps & updates: problems and restart-related events; a crash wins its pixel over a restart over a warning
   const restartish = (e) => ["restart", "reboot"].includes(e.kind);
@@ -889,15 +904,25 @@ function loadIndex() {
   p.catch(() => { if (S.ixLoad?.p === p) S.ixLoad = null; });
   return p;
 }
+/* the line, or a range's start and end lines with the stretch between them shaded */
 function placeCursor() {
-  const cur = $("#tlcur"), band = $("#tlband"), tl = S.tl; if (!cur || tl?.cur == null || !tl.W) return;
-  const x = tlX(tl.cur), show = x >= TL_LW - 1 && x <= tl.W - TL_R + 1;
-  cur.style.display = band.style.display = show ? "" : "none";
+  const tl = S.tl, band = $("#tlband"); if (!band || tl?.cur == null || !tl.W) return;
+  const r = tl.range, x0 = TL_LW, x1 = tl.W - TL_R, clip = (x) => Math.min(x1, Math.max(x0, x));
+  const [a, b] = r ? [r.a, r.b] : [tl.cur - tl.win, tl.cur + tl.win], xa = clip(tlX(a)), xb = clip(tlX(b)), cx = tlX(tl.cur);
+  band.style.display = (r ? xb > xa : cx >= x0 - 1 && cx <= x1 + 1) ? "" : "none";
+  band.classList.toggle("rng", !!r);
+  band.style.left = `${xa}px`; band.style.width = `${Math.max(0, xb - xa)}px`;
+  pin($("#tlcur"), r ? null : tl.cur, "mid"); pin($("#tlA"), r?.a, "left"); pin($("#tlB"), r?.b, "right");
+}
+/* one line and its time label: a range's labels open outwards (start to the left, end to the right), flipped at the edges */
+function pin(el, t, side) {
+  const tl = S.tl, x = t == null ? NaN : tlX(t), show = x >= TL_LW - 1 && x <= tl.W - TL_R + 1;
+  el.style.display = show ? "" : "none";
   if (!show) return;
-  const a = Math.max(TL_LW, tlX(tl.cur - tl.win)), b = Math.min(tl.W - TL_R, tlX(tl.cur + tl.win));
-  cur.style.left = `${x}px`; band.style.left = `${a}px`; band.style.width = `${Math.max(0, b - a)}px`;
-  const lbl = $("#tlcurl"); lbl.textContent = fmtMs(tl.cur, true).slice(5);
-  lbl.style.transform = x > tl.W - 80 ? "translateX(-100%)" : "";
+  el.style.left = `${x}px`;
+  const lbl = $(".lbl", el), room = 130; lbl.textContent = fmtMs(t, true).slice(5);
+  lbl.style.transform = side === "left" ? (x - room < TL_LW ? "translateX(0)" : "translateX(-100%)")
+    : side === "right" ? (x + room > tl.W ? "translateX(-100%)" : "translateX(0)") : x > tl.W - 80 ? "translateX(-100%)" : "";
 }
 /* zoomed out, a pixel is minutes: a click or drag near events lands on the nearest one instead of on empty time */
 function snapT(t) {
@@ -914,13 +939,55 @@ function setCursor(t, { snap = false, follow = false } = {}) {
   else placeCursor();
   queueLogs();
 }
-/* ← → the next event in any of the logs; with Shift the next power cycle */
+/* a range: every log between its start a and end b; null goes back to the line (inside the range) */
+function setRange(r, { follow = false } = {}) {
+  const tl = S.tl, old = tl.range;
+  if (!r && old && (tl.cur < old.a || tl.cur > old.b)) tl.cur = (old.a + old.b) / 2;
+  tl.range = r;
+  rangeBar();
+  if (follow && r && (r.a < tl.t0 || r.b > tl.t1)) {
+    const span = Math.max(tl.t1 - tl.t0, (r.b - r.a) * 1.25), m = (r.a + r.b) / 2;
+    tl.t0 = m - span / 2; tl.t1 = m + span / 2; drawTimeline();
+  } else placeCursor();
+  queueLogs();
+}
+/* a new range around the line (when it is in view): ± the chosen seconds, or a fifth of the view if that is wider */
+function startRange() {
+  const tl = S.tl, m = tl.cur >= tl.t0 && tl.cur <= tl.t1 ? tl.cur : (tl.t0 + tl.t1) / 2, h = Math.max(tl.win, (tl.t1 - tl.t0) / 10);
+  return { a: m - h, b: m + h };
+}
+const moveEnd = (end, t) => { const r = S.tl.range; setRange(end === "a" ? { a: Math.min(t, r.b - 1e-3), b: r.b } : { a: r.a, b: Math.max(t, r.a + 1e-3) }); };
+/* a click on the timeline: the line goes there, or the nearer end of a range */
+function clickAt(t) {
+  const r = S.tl.range;
+  if (!r) return setCursor(t, { snap: true });
+  moveEnd(Math.abs(t - r.a) <= Math.abs(t - r.b) ? "a" : "b", t);
+}
+/* a mark or a "next" link: the line moves there; a range keeps its length and centres on it when it is outside */
+function moveTo(t) {
+  const r = S.tl.range;
+  if (!r) return setCursor(t, { follow: true });
+  if (t < r.a || t > r.b) setRange({ a: t - (r.b - r.a) / 2, b: t + (r.b - r.a) / 2 }, { follow: true });
+}
+function rangeBar() {
+  const r = S.tl.range, w = r ? "The same length" : "", b = $("#lcR"); if (!b) return;
+  $("#lcH").textContent = r ? "Logs in the range" : "Logs at the line";
+  b.classList.toggle("on", !!r); b.title = r ? "Back to one line" : "Every log between a start and an end line";
+  $("#lcW").style.display = r ? "none" : "";
+  $("#lcPrev").title = `${r ? `${w} earlier` : "Previous event"} (←) · Shift: previous power cycle`;
+  $("#lcNext").title = `${r ? `${w} later` : "Next event"} (→) · Shift: next power cycle`;
+}
+/* ← → the next event in any of the logs (a range: the same length earlier / later); with Shift the next power cycle */
 function stepCursor(dir, cycle) {
-  const t = S.tl?.cur; if (t == null) return;
+  const tl = S.tl, r = tl?.range; if (tl?.cur == null) return;
+  if (r && !cycle) return setRange({ a: r.a + dir * (r.b - r.a), b: r.b + dir * (r.b - r.a) }, { follow: true });
+  const t = r ? (r.a + r.b) / 2 : tl.cur;
   let a = S.ix?.cid === S.c.id ? S.ix.ts : [];
   if (cycle) a = S.c.items.map((x) => x.time_ts).filter((x) => x != null).sort((p, q) => p - q);
   const i = dir > 0 ? bisect(a, (v) => v <= t + 5e-4) : bisect(a, (v) => v < t - 5e-4) - 1;
-  if (i >= 0 && i < a.length) setCursor(a[i], { follow: true });
+  if (i < 0 || i >= a.length) return;
+  if (r) setRange({ a: a[i] - (r.b - r.a) / 2, b: a[i] + (r.b - r.a) / 2 }, { follow: true });
+  else setCursor(a[i], { follow: true });
 }
 /* the three logs fill what the window has left below the timeline, so both fit on one screen where they can */
 function sizeLogs() {
@@ -928,72 +995,94 @@ function sizeLogs() {
   const below = g.getBoundingClientRect().top - card.getBoundingClientRect().top;
   g.style.setProperty("--lch", `${Math.max(200, Math.min(520, innerHeight - 58 - below - 64))}px`);
 }
+function rangeText(r) {
+  const a = fmtMs(r.a, true), b = fmtMs(r.b, true), d = r.b - r.a;
+  return `${a} → ${a.slice(0, 10) === b.slice(0, 10) ? b.slice(11) : b} ${tzLabel()} · ${d < 10 ? `${d.toFixed(2)}s` : fmtDur(d)}`;
+}
 let logsQueued = false;
 function queueLogs() { if (!logsQueued) { logsQueued = true; requestAnimationFrame(() => { logsQueued = false; renderLogs(); }); } }
+/* the line: the events within ± w of it, the nearest 200 shown around a marker at the line's time.
+   a range: every event from its start to its end, 200 more each time a list is scrolled to its end */
 function renderLogs() {
   const tl = S.tl, ix = S.ix; if (!$("#lcGrid") || tl?.cur == null) return;
-  const t = tl.cur, w = tl.win, key = `${t}|${w}`;
-  $("#lcT").textContent = `${fmtMs(t, true)} ${tzLabel()}`;
+  const r = tl.range, t = tl.cur, w = tl.win, [p, q] = r ? [r.a, r.b] : [t - w, t + w], key = r ? `r${r.a}` : `${t}|${w}`;
+  $("#lcT").textContent = r ? rangeText(r) : `${fmtMs(t, true)} ${tzLabel()}`;
   if (ix?.cid !== S.c.id) { LOGS.forEach(([k]) => { $(`#lc-${k}`).innerHTML = '<div class="lempty">Loading the logs…</div>'; }); return; }
-  let need0 = Infinity, need1 = -1;
+  const miss = [], where = r ? "in the range" : `within ±${w} s`;
   LOGS.forEach(([k, name]) => {
     const b = ix.by[k], box = $(`#lc-${k}`), cnt = $(`#lcn-${k}`);
+    box._more = false;
     if (!b.ts.length) { cnt.textContent = ""; box.innerHTML = `<div class="lempty">No ${name} log in this case</div>`; return; }
-    const lo = bisect(b.ts, (v) => v < t - w), hi = bisect(b.ts, (v) => v <= t + w), at = bisect(b.ts, (v) => v < t);
-    const keep = box._key === key, top = box.scrollTop; box._key = key;
-    cnt.textContent = hi > lo ? `${(hi - lo).toLocaleString()} within ±${w} s` : "";
+    const lo = bisect(b.ts, (v) => v < p), hi = bisect(b.ts, (v) => v <= q);
+    const keep = box._key === key, top = box.scrollTop; box._key = key;   // a range keeps its scroll while only its end moves
+    if (!keep) box._n = LOG_MAX;
+    cnt.textContent = hi > lo ? `${(hi - lo).toLocaleString()} ${where}` : "";
     if (hi === lo) {
-      box.innerHTML = `<div class="lempty">Nothing logged within ±${w} s${lo > 0 ? `<a class="ljump" data-t="${b.ts[lo - 1]}">‹ previous: ${fmtDur(t - b.ts[lo - 1])} earlier</a>` : ""}${hi < b.ts.length ? `<a class="ljump" data-t="${b.ts[hi]}">next: ${fmtDur(b.ts[hi] - t)} later ›</a>` : ""}</div>`;
+      box.innerHTML = `<div class="lempty">Nothing logged ${where}${lo > 0 ? `<a class="ljump" data-t="${b.ts[lo - 1]}">‹ previous: ${fmtDur((r ? p : t) - b.ts[lo - 1])} ${r ? "before the start" : "earlier"}</a>` : ""}${hi < b.ts.length ? `<a class="ljump" data-t="${b.ts[hi]}">next: ${fmtDur(b.ts[hi] - (r ? q : t))} ${r ? "after the end" : "later"} ›</a>` : ""}</div>`;
       return;
     }
-    const a = Math.max(lo, Math.min(at - LOG_MAX / 2, hi - LOG_MAX)), z = Math.min(hi, a + LOG_MAX), now = `<div class="lnow"><span>${fmtMs(t)}</span></div>`, html = [];
+    const at = r ? -1 : bisect(b.ts, (v) => v < t), a = r ? lo : Math.max(lo, Math.min(at - LOG_MAX / 2, hi - LOG_MAX)), z = Math.min(hi, a + (r ? box._n : LOG_MAX));
+    const now = `<div class="lnow"><span>${fmtMs(t)}</span></div>`, html = [];
+    const days = r && fmtMs(p, true).slice(0, 10) !== fmtMs(q, true).slice(0, 10);   // a range over midnight: a heading for each day
+    let day = "";
     if (a > lo) html.push(`<div class="lmore">${(a - lo).toLocaleString()} earlier not shown</div>`);
     for (let i = a; i < z; i++) {
       if (i === at) html.push(now);
-      const gi = b.idx[i], r = ix.rows.get(gi);
-      if (!r) { need0 = Math.min(need0, gi); need1 = Math.max(need1, gi); }
-      html.push(logRow(ix, gi, b.ts[i], b.ts[i] - t, r));
+      if (days && fmtMs(b.ts[i], true).slice(0, 10) !== day) { day = fmtMs(b.ts[i], true).slice(0, 10); html.push(`<div class="lday">${day}</div>`); }
+      const gi = b.idx[i], row = ix.rows.get(gi);
+      if (!row) miss.push(gi);
+      html.push(logRow(ix, gi, b.ts[i], b.ts[i] - (r ? p : t), row, !!r));
     }
-    if (at >= z) html.push(now);
-    if (z < hi) html.push(`<div class="lmore">${(hi - z).toLocaleString()} later not shown</div>`);
+    if (!r && at >= z) html.push(now);
+    if (z < hi) html.push(r ? `<div class="lmore"><a class="lshow">Show ${Math.min(LOG_MAX, hi - z)} more</a> · ${(hi - z).toLocaleString()} later</div>`
+      : `<div class="lmore">${(hi - z).toLocaleString()} later not shown</div>`);
     box.innerHTML = html.join("");
-    box.scrollTop = keep ? top : box.querySelector(".lnow").offsetTop - box.clientHeight / 2;
+    box.scrollTop = keep ? top : r ? 0 : box.querySelector(".lnow").offsetTop - box.clientHeight / 2;
   });
-  if (need1 >= 0) fetchRows(ix, need0, need1);
+  if (!miss.length) return;
+  if (r) fetchIds(ix, miss);   // a range's rows can be far apart: only the ones listed
+  else fetchRows(ix, Math.min(...miss), Math.max(...miss));
 }
-function logRow(ix, i, ts, off, r) {
+/* one event: its offset (from the line, or from a range's start) and time, what it is, and what it says - its message,
+   when Windows wrote one, else its key fields. Clicked open: the whole message and every field */
+function logRow(ix, i, ts, off, r, rng = false) {
   const st = r ? r.state || LEVEL_STATE[r.level] || "" : "", prov = r ? r.provider.replace("Microsoft-Windows-", "") : "";
   const log = r && !/^(System|Application|Microsoft-Windows-Storage-Storport\/Operational)$/i.test(r.channel) ? `<span class="ltag">${esc(shortChan(r.channel))}</span>` : "";
-  const sub = r ? [r.label ? prov : "", r.text].filter(Boolean).join(" · ") : "";
-  return `<div class="lr ${st}${Math.abs(off) < 5e-4 ? " at" : ""}" data-idx="${i}" title="${esc(sub)}">
-    <div class="lo"><b>${fmtSec(off)}</b><span>${fmtMs(ts)}</span></div>
+  const sub = r ? [r.label ? prov : "", r.text].filter(Boolean).join(" · ") : "", full = ix.full.get(i);
+  return `<div class="lr ${st}${!rng && Math.abs(off) < 5e-4 ? " at" : ""}" data-idx="${i}" title="${esc(r?.msg || sub)}">
+    <div class="lo"><b>${rng && off >= 60 ? `+${fmtDur(off)}` : fmtSec(off)}</b><span>${fmtMs(ts)}</span></div>
     <div class="lx"><div>${r ? `<b class="mono">${r.eid}</b> ${esc(r.label || prov)}${log}` : "&nbsp;"}</div><div class="lt">${r ? esc(sub) || "&nbsp;" : "…"}</div></div></div>${
-    ix.open.has(i) ? `<pre class="data lpre">${esc(ix.full.has(i) ? JSON.stringify(ix.full.get(i), null, 1) : "Loading…")}</pre>` : ""}`;
+    !ix.open.has(i) ? "" : !full ? '<pre class="data lpre">Loading…</pre>' : `<div class="lmsg${full.msg ? "" : " none"}">${esc(full.msg || "No message text for this event")}</div>
+    <pre class="data lpre">${esc(JSON.stringify(full.data, null, 1))}</pre>`}`;
 }
 let rowsBusy = false;
-async function fetchRows(ix, lo, hi) {
+async function getRows(ix, query, want) {
   if (rowsBusy) return;   // one request at a time: when it lands, the next frame asks for whatever is still missing
-  // plus a block either side, so a drag finds the next rows already here
-  const a = Math.max(0, (Math.floor(lo / CHUNK) - 1) * CHUNK), b = Math.min(ix.ts.length, a + 16 * CHUNK, (Math.floor(hi / CHUNK) + 2) * CHUNK);
   rowsBusy = true;
   try {
-    const rows = await api(`/api/cases/${encodeURIComponent(ix.cid)}/rows?from=${a}&to=${b}`);
+    const rows = await api(`/api/cases/${encodeURIComponent(ix.cid)}/rows?${query}`);
     if (ix.rows.size > 200000) ix.rows.clear();
     rows.forEach((r) => ix.rows.set(r.idx, r));
-    for (let i = a; i < b; i++) if (!ix.rows.has(i)) ix.rows.set(i, { idx: i, eid: "", level: 4, provider: "", channel: "", label: "(not found)", text: "", state: "" });
+    want.forEach((i) => { if (!ix.rows.has(i)) ix.rows.set(i, { idx: i, eid: "", level: 4, provider: "", channel: "", label: "(not found)", text: "", state: "" }); });
   } catch (e) { toast(e.message); return; } finally { rowsBusy = false; }
   if (S.ix === ix) queueLogs();
 }
+function fetchRows(ix, lo, hi) {   // plus a block either side, so a drag finds the next rows already here
+  const a = Math.max(0, (Math.floor(lo / CHUNK) - 1) * CHUNK), b = Math.min(ix.ts.length, a + 16 * CHUNK, (Math.floor(hi / CHUNK) + 2) * CHUNK);
+  getRows(ix, `from=${a}&to=${b}`, Array.from({ length: b - a }, (_, j) => a + j));
+}
+function fetchIds(ix, ids) { ids = ids.slice(0, 2 * CHUNK); getRows(ix, `ids=${ids.join(",")}`, ids); }
 async function loadFull(ix, i) {
-  try { const [e] = await api(`/api/cases/${encodeURIComponent(ix.cid)}/events?around=${i}&n=0`); ix.full.set(i, e?.data ?? {}); }
-  catch (err) { ix.full.set(i, { error: err.message }); }
+  try { const [e] = await api(`/api/cases/${encodeURIComponent(ix.cid)}/events?around=${i}&n=0`); ix.full.set(i, { msg: e?.msg || "", data: e?.data ?? {} }); }
+  catch (err) { ix.full.set(i, { msg: "", data: { error: err.message } }); }
   if (S.ix === ix) renderLogs();
 }
 
 /* ------------------------------------------------------------------ drive */
 function tabDrive() {
   const c = S.c, hv = HV();
-  const states = ["all", ...new Set(c.storage_events.map((e) => e.state))];
+  const shows = [["all", "All activity"], ["problems", "Warnings & errors"], ["info", "Normal activity"],
+    ...[...new Set(c.storage_events.map((e) => e.state))].filter((s) => s !== "info").map((s) => [s, s])];
   const by = { yes: 0, probably: 0, no: 0, "": 0 };
   c.storage_events.forEach((e) => (by[e.hl ?? ""] = (by[e.hl ?? ""] || 0) + 1));
   const known = c.storage_events.length && c.storage_events[0].hl !== undefined;
@@ -1004,9 +1093,9 @@ function tabDrive() {
       <div style="font-weight:700;font-size:15px;margin:3px 0 8px">${esc(d.Model || "Unknown model")}</div>
       <dl class="kv">${Object.entries(d).filter(([k]) => !["Model", "first_seen", "source", "highlight", "Vendor"].includes(k)).map(([k, v]) => `<dt>${esc(k)}</dt><dd class="mono">${esc(v)}</dd>`).join("")}</dl></div>`).join("")}</div>`
       : `<div class="note" style="margin-bottom:16px">No disk inventory events (Partition/Diagnostic 1006) in these logs — add that log to see model, firmware and serial, and to tie disk events to a drive by disk number.</div>`}
-    <div class="card"><div class="card-h"><h3>Storage warnings &amp; errors <span class="muted small" id="stN"></span></h3>
+    <div class="card"><div class="card-h"><h3>Drive activity <span class="muted small" id="stN"></span></h3>
       <div class="row">${searchBox("stQ")}${known ? `<label class="muted small">Drive <select id="stW">${whoOpts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("")}</select></label>` : ""}
-        <label class="muted small">State <select id="stF">${states.map((s) => `<option>${esc(s)}</option>`).join("")}</select></label></div></div>
+        <label class="muted small">Show <select id="stF">${shows.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("")}</select></label></div></div>
       ${known ? `<div class="card-b" style="padding-bottom:0"><div class="dsum">
         <span class="chip sam">${esc(hv)}</span><b>${by.yes}</b><span class="muted">named or mapped by disk number</span>
         <span class="chip samp">${esc(hv)}?</span><b>${by.probably}</b><span class="muted">probably (name no drive, only drive seen)</span>
@@ -1015,16 +1104,16 @@ function tabDrive() {
       <div class="tbl-wrap" style="max-height:calc(100vh - 420px)"><table class="t" id="stT"></table></div></div>`;
   const draw = () => {
     const f = $("#stF").value, w = $("#stW")?.value || "all", m = matcher(S.v.stQ);
-    const rows = c.storage_events.filter((e) => (f === "all" || e.state === f) &&
+    const rows = c.storage_events.filter((e) => (f === "all" || (f === "problems" ? e.state !== "info" : e.state === f)) &&
       (w === "all" || (w === "hl" ? isHl(e.hl) : w === "no" ? e.hl === "no" : !e.hl)) &&
       (!m || m([e.eid], `${e.label} ${e.provider} ${e.dev || ""} ${e.dev_basis || ""} ${e.channel}`)));
     $("#stN").textContent = rows.length < c.storage_events.length ? `${rows.length.toLocaleString()} of ${c.storage_events.length.toLocaleString()}` : "";
     pageRows($("#stT"), `<thead><tr><th>Time (${tzLabel()})</th><th>ID</th><th>Meaning</th><th>Provider</th><th>Drive</th><th>Log</th><th>State</th><th>Near</th></tr></thead>`, rows, (e) => `
-      <tr class="click ${isHl(e.hl) ? "sam" : ""}" data-idx="${e.idx}"><td style="white-space:nowrap">${fmt(e.time)}</td><td class="mono"><b>${e.eid}</b></td><td>${esc(e.label)}</td>
+      <tr class="click ${e.state === "info" ? "info" : isHl(e.hl) ? "sam" : ""}" data-idx="${e.idx}"><td style="white-space:nowrap">${fmt(e.time)}</td><td class="mono"><b>${e.eid}</b></td><td>${esc(e.label)}</td>
         <td>${esc(e.provider.replace("Microsoft-Windows-", ""))}</td>
         <td>${known ? `<span class="chips">${devBadge(e)}<span class="small">${esc(e.dev || "not identified")}</span></span><div class="muted small">${esc(e.dev_basis || "")}</div>` : '<span class="muted small">re-run to identify</span>'}</td>
         <td class="muted small">${esc(shortChan(e.channel))}</td><td>${stateChip(e.state)}</td><td class="near">${nearCell(tsOf(e.time))}</td></tr>`,
-      "No storage warnings or errors match.");
+      f === "all" && !m ? "No drive events in these logs." : "No drive events match.");
   };
   onRows($("#stT"), (r) => openContext(r.dataset.idx, "Storage event"));
   bind(["stQ", "stF", "stW"], draw); draw();
@@ -1082,8 +1171,8 @@ function tabQuality() {
         <thead><tr><th>Log</th><th>Events</th><th>From</th><th>To</th></tr></thead><tbody>
         ${c.channels.map((ch) => `<tr><td title="${esc(ch.channel)}">${esc(shortChan(ch.channel))}</td><td>${ch.events.toLocaleString()}</td><td style="white-space:nowrap">${fmt(ch.start, false)}</td><td style="white-space:nowrap">${fmt(ch.end, false)}</td></tr>`).join("")}
         </tbody></table></div>
-        <div class="card-h" style="border-top:1px solid var(--line-2)"><h3>Files</h3></div><div class="tbl-wrap"><table class="t"><thead><tr><th>File</th><th>Events</th><th>Read with</th></tr></thead><tbody>
-        ${c.sources.map((s) => `<tr><td class="mono" title="${esc(s.path)}">${esc(s.file)}</td><td>${s.error ? `<span style="color:var(--bad)">error</span>` : s.events.toLocaleString()}</td><td class="muted">${esc(s.reader || "—")}</td></tr>`).join("")}
+        <div class="card-h" style="border-top:1px solid var(--line-2)"><h3>Files</h3></div><div class="tbl-wrap"><table class="t"><thead><tr><th>File</th><th>Events</th><th title="Events whose message (Event Viewer's General text) was read">With message</th><th>Read with</th></tr></thead><tbody>
+        ${c.sources.map((s) => `<tr><td class="mono" title="${esc(s.path)}">${esc(s.file)}</td><td>${s.error ? `<span style="color:var(--bad)">error</span>` : s.events.toLocaleString()}</td><td>${s.messages == null || s.error ? "—" : s.messages.toLocaleString()}</td><td class="muted">${esc(s.reader || "—")}</td></tr>`).join("")}
         </tbody></table></div>
         ${c.skipped_files ? `<div class="muted small pad">${c.skipped_files.toLocaleString()} other log${c.skipped_files > 1 ? "s" : ""} in the folder skipped — only System, Application and Storport are read from a folder.</div>` : ""}</div>
     </div>
@@ -1106,7 +1195,7 @@ async function init() {
   $("#brandHome").onclick = renderHome; $("#newBtn").onclick = renderHome;
   $("#drawerBack").onclick = closeDrawer;
   document.addEventListener("keydown", (e) => e.key === "Escape" && closeDrawer());
-  document.addEventListener("keydown", (e) => {   // timeline: ← → move the line to the previous / next event
+  document.addEventListener("keydown", (e) => {   // timeline: ← → move the line to the previous / next event, or a range by its length
     if ((e.key !== "ArrowLeft" && e.key !== "ArrowRight") || S.tab !== "timeline" || !$("#tlcur") || $("#drawer").classList.contains("open")
       || /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName || "")) return;
     e.preventDefault(); stepCursor(e.key === "ArrowRight" ? 1 : -1, e.shiftKey);

@@ -126,7 +126,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
   <a href="#quality"><span>11</span><div>Data-quality checks<small>Gaps, cleared logs, clock changes</small></div></a>
   <a href="#tour"><span>12</span><div>Tour of the application<small>Every screen, with what to point out</small></div></a>
   <a href="#exports"><span>13</span><div>Exports and command line<small>HTML, Excel, CSV, JSON, CLI</small></div></a>
-  <a href="#testing"><span>14</span><div>Quality, testing and performance<small>56 tests, robustness, speed</small></div></a>
+  <a href="#testing"><span>14</span><div>Quality, testing and performance<small>59 tests, robustness, speed</small></div></a>
   <a href="#config"><span>15</span><div>Configuration and tuning<small>catalog.py and lens_config.json</small></div></a>
   <a href="#limits"><span>16</span><div>Limitations — and what to say<small>Honest caveats with mitigations</small></div></a>
   <a href="#demo"><span>17</span><div>Demo script and likely questions<small>15-minute run-through, Q&amp;A</small></div></a>
@@ -162,7 +162,7 @@ svg.dia { width: 100%; height: auto; display: block; margin: 6px 0 10px; font-fa
   <div class="tile"><b>0 installs</b><span>Python standard library only; <code>.evtx</code> read with Windows' own <code>wevtutil</code></span></div>
   <div class="tile" style="--c:var(--ok)"><b>100 % local</b><span>UI served on 127.0.0.1 only; no internet; no data leaves the PC</span></div>
   <div class="tile" style="--c:var(--purple)"><b>~4.7 s</b><span>to analyse ~200,000 events (6,400 power cycles) — analysis step, measured on a laptop</span></div>
-  <div class="tile" style="--c:var(--sam)"><b>56 tests</b><span>rule tests, a full demo scenario with known answers, and a random-input robustness test</span></div>
+  <div class="tile" style="--c:var(--sam)"><b>59 tests</b><span>rule tests, a full demo scenario with known answers, and a random-input robustness test</span></div>
   <div class="tile" style="--c:var(--warn)"><b>Every verdict</b><span>lists the events found, the expected events not logged, its reasons and a confidence score</span></div>
   <div class="tile" style="--c:var(--bad)"><b>4 export formats</b><span>HTML report, Excel workbook (7 sheets), CSV and JSON</span></div>
 </div>
@@ -247,29 +247,29 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 <h2>Components</h2>
 <table class="t compact">
   <thead><tr><th style="width:24%">File</th><th>Responsibility</th><th style="width:9%">Lines</th></tr></thead><tbody>
-  <tr><td class="mono">lens/parser.py</td><td>Reads <code>.evtx</code> (wevtutil, then PowerShell, then the optional python-evtx package on non-Windows) and XML exports into one normalised event record: UTC time, log, provider, event ID, record ID, level, data fields. From a folder it picks only System, Application and Storport (Operational, Health).</td><td>236</td></tr>
-  <tr><td class="mono">lens/catalog.py</td><td>The knowledge base: every power signal, storage and software event ID, evidence weight, threshold, crash code, vendor rule and shutdown-initiator pattern.</td><td>291</td></tr>
-  <tr><td class="mono">lens/engine.py</td><td>The analysis pipeline (chapter 5): from timeline to verdicts, confidence, drive identity, software trigger and the app / update lists.</td><td>1,498</td></tr>
+  <tr><td class="mono">lens/parser.py</td><td>Reads <code>.evtx</code> (wevtutil, then PowerShell, then the optional python-evtx package on non-Windows) and XML exports into one normalised event record: UTC time, log, provider, event ID, record ID, level, data fields, message. From a folder it picks only System, Application and Storport (Operational, Health).</td><td>276</td></tr>
+  <tr><td class="mono">lens/catalog.py</td><td>The knowledge base: every power signal, storage and software event ID, evidence weight, threshold, crash code, vendor rule and shutdown-initiator pattern.</td><td>295</td></tr>
+  <tr><td class="mono">lens/engine.py</td><td>The analysis pipeline (chapter 5): from timeline to verdicts, confidence, drive identity, software trigger and the app / update lists.</td><td>1,502</td></tr>
   <tr><td class="mono">lens/report.py</td><td>Self-contained HTML report, Excel workbook written directly as Office Open XML (no library), CSV and JSON.</td><td>451</td></tr>
-  <tr><td class="mono">lens/server.py</td><td>Local HTTP server and JSON API; native file / folder picker.</td><td>253</td></tr>
-  <tr><td class="mono">lens/store.py</td><td>Saves each case under <code>./cases/&lt;id&gt;</code> (result JSON + compressed events); keeps the open case's events in memory and builds the timeline's event index from them.</td><td>154</td></tr>
-  <tr><td class="mono">lens/demo.py</td><td>Synthetic demo logs covering every tricky scenario, with the expected answers the tests check.</td><td>312</td></tr>
-  <tr><td class="mono">web/ (app.js, app.css, index.html)</td><td>The UI — vanilla JavaScript and CSS, no frameworks or CDN, works offline; light and dark themes.</td><td>1,487</td></tr>
-  <tr><td class="mono">tests/test_engine.py</td><td>56 automated tests (chapter 14).</td><td>616</td></tr>
+  <tr><td class="mono">lens/server.py</td><td>Local HTTP server and JSON API; native file / folder picker.</td><td>255</td></tr>
+  <tr><td class="mono">lens/store.py</td><td>Saves each case under <code>./cases/&lt;id&gt;</code> (result JSON + compressed events); keeps the open case's events in memory and builds the timeline's event index from them.</td><td>166</td></tr>
+  <tr><td class="mono">lens/demo.py</td><td>Synthetic demo logs covering every tricky scenario, with the expected answers the tests check.</td><td>381</td></tr>
+  <tr><td class="mono">web/ (app.js, app.css, index.html)</td><td>The UI — vanilla JavaScript and CSS, no frameworks or CDN, works offline; light and dark themes.</td><td>1,588</td></tr>
+  <tr><td class="mono">tests/test_engine.py</td><td>59 automated tests (chapter 14).</td><td>675</td></tr>
 </tbody></table>
 
 <h2>Technology choices — and why</h2>
 <table class="t compact">
   <thead><tr><th style="width:30%">Choice</th><th>Reason</th></tr></thead><tbody>
   <tr><td class="k">Python standard library only</td><td>Nothing to install on locked-down Windows PCs; simpler IT approval; one language for parser, engine, server and reports.</td></tr>
-  <tr><td class="k">Windows' own <code>wevtutil</code></td><td>Microsoft's reader for <code>.evtx</code> — exact field names and values, no third-party parser. PowerShell and python-evtx are fallbacks.</td></tr>
+  <tr><td class="k">Windows' own <code>wevtutil</code></td><td>Microsoft's reader for <code>.evtx</code> — exact field names, values and messages, no third-party parser. PowerShell and python-evtx are fallbacks.</td></tr>
   <tr><td class="k">Local web UI on 127.0.0.1</td><td>A modern browser interface without deploying a server; claim data never leaves the PC.</td></tr>
   <tr><td class="k">Rules in a catalog, not in code</td><td>Reviewers can audit and tune event IDs, weights and thresholds; a JSON override changes behaviour without a code change.</td></tr>
   <tr><td class="k">Deterministic rules, not a model</td><td>Claim decisions must be reproducible and auditable: the same logs always give the same verdict, with the evidence shown. (AI is proposed on top, chapter 19.)</td></tr>
   <tr><td class="k">Excel written directly</td><td>Office Open XML is a zip of XML files; writing it directly avoids an external dependency while still giving frozen headers, filters and highlighted rows.</td></tr>
 </tbody></table>
 <h3>Local API (used by the UI)</h3>
-<p class="small"><code>GET /api/cases</code> · <code>GET /api/cases/&lt;id&gt;</code> · <code>GET /api/cases/&lt;id&gt;/events?around=&lt;idx&gt;&amp;n=20</code> · <code>GET /api/cases/&lt;id&gt;/events?tag=software&amp;from=…&amp;to=…</code> (a whole app / update list) · <code>GET /api/cases/&lt;id&gt;/index</code> (every event's time and log, for the timeline line) · <code>GET /api/cases/&lt;id&gt;/rows?from=&lt;i&gt;&amp;to=&lt;j&gt;</code> (short rows for events i … j−1) · <code>GET /api/cases/&lt;id&gt;/export.(html|xlsx|csv|json)?tz=330</code> ·
+<p class="small"><code>GET /api/cases</code> · <code>GET /api/cases/&lt;id&gt;</code> · <code>GET /api/cases/&lt;id&gt;/events?around=&lt;idx&gt;&amp;n=20</code> · <code>GET /api/cases/&lt;id&gt;/events?tag=software&amp;from=…&amp;to=…</code> (a whole app / update list) · <code>GET /api/cases/&lt;id&gt;/index</code> (every event's time and log, for the timeline line) · <code>GET /api/cases/&lt;id&gt;/rows?from=&lt;i&gt;&amp;to=&lt;j&gt;</code> (short rows for events i … j−1, or <code>?ids=…</code>) · <code>GET /api/cases/&lt;id&gt;/export.(html|xlsx|csv|json)?tz=330</code> ·
   <code>POST /api/analyze</code> · <code>POST /api/demo</code> · <code>POST /api/pick</code> · <code>DELETE /api/cases/&lt;id&gt;</code> · <code>GET /api/config</code></p>
 
 <!-- ============================================================ 4 INPUTS -->
@@ -429,13 +429,13 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
 <h2>What is checked</h2>
 <p>Every storage event — every Storport event at every level, plus disk, stornvme / storahci / Intel RST resets, NTFS, volmgr and WHEA — in
   the 60 s before the last logged event and the 60 s after boot (for sleeps: before sleep entry and after wake). Each is listed with its offset and key fields; SCSI opcodes
-  are decoded (e.g. <code>Opcode=42 (WRITE(10))</code>). Informational events are listed but do not change the verdict.</p>
+  are decoded (e.g. <code>Opcode=42 (WRITE(10))</code>). Information events are the drive's <b>normal activity</b>: listed, drawn as thin green ticks on the timeline and kept in the Drive tab, but they never change the verdict — NTFS 98 logged as Information ("Volume C: is healthy", at every boot) is normal activity, NTFS 98 logged as an error is "volume needs repair".</p>
 <div class="grid2">
   <table class="t compact">
     <thead><tr><th>Drive state (worst first)</th><th>Example events</th></tr></thead><tbody>
     <tr><td><span class="chip c-bad">missing</span></td><td>disk 157 — disk surprise-removed</td></tr>
     <tr><td><span class="chip c-bad">reset</span></td><td>stornvme / storahci 129 — reset to device</td></tr>
-    <tr><td><span class="chip c-bad">error</span></td><td>disk 7, 11, 51, 52, 154; NTFS 50/55/98/140; WHEA 18</td></tr>
+    <tr><td><span class="chip c-bad">error</span></td><td>disk 7, 11, 51, 52, 154; NTFS 50/55/140, 98 unless Information; WHEA 18</td></tr>
     <tr><td><span class="chip c-warn">slow</span></td><td>disk 153 — I/O retried</td></tr>
     <tr><td><span class="chip c-warn">warning</span></td><td>Storport warnings; WHEA 17/19/47 corrected errors</td></tr>
   </tbody></table>
@@ -670,9 +670,9 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
     <div class="callout"><b>Point out in the demo:</b> retries, Storport warnings and two resets (32 s and 17 s before power-off). The Storport warnings are <i>named in the event</i>, the retries are mapped through <i>Disk 0</i>, and the resets — which name no drive — show as <span class="chip c-samp">Samsung?</span>: the app is honest about which links are certain.</div>
   </div>
 </div>
-<figure class="pb"><img src="img/s_drive.jpg"><figcaption><b>Drive tab.</b> Disk cards from the inventory (Samsung outlined in teal, other vendors labelled), a per-drive summary (named or mapped / probably / other drive / not identified), drive and state filters, and every storage warning/error with the drive and how it was identified. <b>Near</b> shows the time since the power cycle before and to the one after (click either to open it); search by event ID or text.</figcaption></figure>
+<figure class="pb"><img src="img/s_drive.jpg"><figcaption><b>Drive tab.</b> Disk cards from the inventory (Samsung outlined in teal, other vendors labelled), a per-drive summary (named or mapped / probably / other drive / not identified), drive and <i>Show</i> filters (all activity, warnings &amp; errors, normal activity, or one state), and every storage event with the drive and how it was identified — normal activity in grey, the tab's count is the warnings and errors. <b>Near</b> shows the time since the power cycle before and to the one after (click either to open it); search by event ID or text.</figcaption></figure>
 <figure><img src="img/s_software.jpg"><figcaption><b>Apps &amp; updates tab.</b> Every crash, hang, Windows Update, installer and service event, latest first, filterable by kind and searchable by event ID, with the app / update / service named; <b>Near</b> gives the time since the power cycle before and to the one after.</figcaption></figure>
-<figure><img src="img/s_timeline.jpg"><figcaption><b>Timeline.</b> Zoom and pan across the whole log period: powered-on sessions, transitions, sleeps, a dedicated <b>Samsung drive</b> lane, other storage events, the <b>Apps &amp; updates</b> lane, and log coverage per channel; record gaps shaded. <b>The line</b> — drag it, click anywhere, or step with ← → (Shift: a power cycle at a time) — lists below it every <b>System</b>, <b>Application</b> and <b>Storport</b> event within ± 5 s (1–60 s to choose), each with its offset from the line and its log time to the millisecond; here it sits on T5's second NVMe reset, with the I/O retries and Storport warnings that led up to it. Click a row for its full data; a power-cycle marker opens its details. With hundreds of marks in view (a case with thousands of power cycles, zoomed out), each lane shows its most important mark per slot and the tooltip says how many more are there.</figcaption></figure>
+<figure><img src="img/s_timeline.jpg"><figcaption><b>Timeline.</b> Zoom and pan across the whole log period: powered-on sessions, transitions, sleeps, a dedicated <b>Samsung drive</b> lane, other storage events, the <b>Apps &amp; updates</b> lane, and log coverage per channel; record gaps shaded. <b>The line</b> — drag it, click anywhere, or step with ← → (Shift: a power cycle at a time) — lists below it every <b>System</b>, <b>Application</b> and <b>Storport</b> event within ± 5 s (1–60 s to choose), each with its offset from the line and its log time to the millisecond. <b>Range</b> (or Shift-drag on the timeline) gives a start and an end line to drag, and the three logs list every event between them, 200 more as a list is scrolled, with a heading for each day; ← → move it by its own length. Here a range covers T5: the I/O retries, NVMe resets and Storport warnings, then the boot. Each row says what the event says — its message, as on Event Viewer's <i>General</i> tab — and clicking it opens the whole message above the event's fields. Thin green ticks on the drive lanes are the drive's normal activity; a power-cycle marker opens its details. With hundreds of marks in view (a case with thousands of power cycles, zoomed out), each lane shows its most important mark per slot and the tooltip says how many more are there.</figcaption></figure>
 <p class="small">Also: <b>Data quality</b> tab (chapter 11), a case list in the sidebar (cases are saved locally), time-zone selector, dark mode, and analysis settings on the home screen (drive window, software trigger window, restart gap, review threshold, quiet-gap length). The path box on the home screen starts empty for every new analysis.</p>
 
 <!-- ============================================================ 13 EXPORTS -->
@@ -698,7 +698,7 @@ Was it even our drive — or another disk, a USB stick, the platform? Or was the
       <tr><td class="k">Power cycles</td><td>All verdicts and reasons (23 columns, with the account that asked); Samsung rows filled</td></tr>
       <tr><td class="k">Drive windows</td><td>Every storage event around every power cycle, with drive and how identified; Samsung warnings / errors filled teal</td></tr>
       <tr><td class="k">Software windows</td><td>The 100 app / update / service events nearest each power cycle, before and after</td></tr>
-      <tr><td class="k">Storage events</td><td>All storage warnings / errors with drive attribution</td></tr>
+      <tr><td class="k">Storage events</td><td>Every storage event — warnings, errors and normal activity — with drive attribution</td></tr>
       <tr><td class="k">Software events</td><td>All app / update / service events</td></tr>
       <tr><td class="k">Coverage</td><td>Each log's time range and event count</td></tr>
     </tbody></table>
@@ -722,7 +722,7 @@ python -m unittest discover -s tests -v</pre>
 
 <!-- ============================================================ 14 TESTING -->
 <h1 id="testing"><span class="n">14</span>Quality, testing and performance</h1>
-<div class="lead">56 automated tests pin down every rule; a demo case with known answers checks the whole pipeline; a random-input test checks it never crashes.</div>
+<div class="lead">59 automated tests pin down every rule; a demo case with known answers checks the whole pipeline; a random-input test checks it never crashes.</div>
 <table class="t">
   <thead><tr><th style="width:24%">Test group</th><th style="width:9%">Tests</th><th>What it proves</th></tr></thead><tbody>
   <tr><td class="k">Demo scenario</td><td>11</td><td>All 4 demo logs parse; all 16 power cycles and 5 sleeps get the expected verdict; drive cause/effect, Samsung attribution, software triggers, the app / update lists from one power cycle to the next, data-quality findings and all four exports are as expected; exports leave the user's account name out.</td></tr>
@@ -748,11 +748,11 @@ python -m unittest discover -s tests -v</pre>
 <h2>Other checks done for this release</h2>
 <ul>
   <li>Tabs on the 196,400-event case (8,400 power cycles), until painted: Power cycles 517 → 33 ms, Drive 367 → 33 ms, Apps &amp; updates 150 → 33 ms, a search 94 → 8 ms; timeline panning 154 → 24 ms a frame (35,793 → 4,144 nodes). The demo timeline draws pixel for pixel as before.</li>
-  <li>The timeline line in Chrome on a 196,400-event case: 0.12 ms to move it (counts, offsets and order come from the index in the browser), one frame per move while dragging, and the rows of a part not yet visited in about 50 ms. The index is 1.7 MB, read in the background when the case opens.</li>
-  <li>Click, drag, ← → and Shift, a row's full data, the ± window, a click on an event mark, and the jump links of an empty log — driven in a real browser, with no script errors.</li>
+  <li>The timeline in Chrome: on 196,400 events the line moves in 0.12 ms (the 1.7 MB index is in the browser) and unseen rows arrive in about 50 ms; a week-long range on 201,754 events (78,345 in it) lists the first 200 per log in 12 ms, 10 ms per move of its end.</li>
+  <li>Click, drag, ← → and Shift, Shift-drag and a range's ends, a row's message and data, the ± window, mark clicks and jump links — driven in a real browser, with no script errors.</li>
   <li>Every tab and the detail drawer rendered in a real browser (headless Chrome) — the demo case, a case saved by the previous version and a busy case — with a check for script errors.</li>
   <li>A busy case — crash loops of 351 and 251 events around one hard shutdown: each list opens at the 100 nearest, <i>Show more</i> loads the rest without moving the rows in view, and the drawer search finds events that were not loaded yet.</li>
-  <li>A folder holding Setup, Security and Partition logs next to the four: 3 skipped; Storport Health read and shown as its own log.</li>
+  <li>A folder with Setup, Security and Partition logs next to the four: 3 skipped; Storport Health read as its own log.</li>
   <li>End-to-end through the real local server: analysis of a folder, the demo, every export, the event API, delete.</li>
   <li>Python 3.9 compatibility (the oldest supported version) — the suite runs on 3.9.</li>
 </ul>
@@ -762,7 +762,7 @@ python -m unittest discover -s tests -v</pre>
   <div class="tile"><b>1.7 s</b><span>98,200 events · 3,200 power cycles</span></div>
   <div class="tile"><b>4.7 s</b><span>196,400 events · 6,400 power cycles</span></div>
 </div>
-<p class="small">Reading <code>.evtx</code> with wevtutil on Windows adds time proportional to file size. Time grows somewhat faster than the event count (10× the events took about 20× the time) but stays in seconds for very large logs.</p>
+<p class="small">Reading <code>.evtx</code> with wevtutil adds time in proportion to file size (more with the messages; to be timed on Windows). Time grows faster than the event count (10× the events, about 20× the time) but stays in seconds for very large logs.</p>
 
 <!-- ============================================================ 15 CONFIG -->
 <h1 id="config"><span class="n">15</span>Configuration and tuning</h1>
@@ -843,7 +843,7 @@ python -m unittest discover -s tests -v</pre>
 <h2>Likely questions</h2>
 <table class="t">
   <thead><tr><th style="width:31%">Question</th><th>Answer</th></tr></thead><tbody>
-  <tr><td class="k">How accurate is it?</td><td>The rules use standard Windows event IDs and are pinned by 56 tests. Accuracy on real claims will be measured next on 20–30 closed claims with known outcomes. Meanwhile, confidence scores and "needs review" flags show where it is unsure.</td></tr>
+  <tr><td class="k">How accurate is it?</td><td>The rules use standard Windows event IDs and are pinned by 59 tests. Accuracy on real claims will be measured next on 20–30 closed claims with known outcomes. Meanwhile, confidence scores and "needs review" flags show where it is unsure.</td></tr>
   <tr><td class="k">Can it prove the drive is fine?</td><td>No — and it says so. The logs are stored on the drive itself; a sudden freeze can lose the last events. It points to SMART and drive-side logs for that.</td></tr>
   <tr><td class="k">How does it know it's our drive?</td><td>Storport events usually name the drive; disk events are mapped through the boot's disk inventory; anything else is "probably" (only one drive) or "not identified". The basis is shown on every event.</td></tr>
   <tr><td class="k">What if the PC has two drives or a USB stick?</td><td>Disk numbers are mapped per boot; unnamed events are not guessed when there are two drives (demo S3).</td></tr>
@@ -985,11 +985,12 @@ summary = next(b.text <span class="k">for</span> b <span class="k">in</span> res
   <tr><td>disk 157</td><td>Disk surprise-removed</td><td>missing</td></tr>
   <tr><td>stornvme 11</td><td>NVMe controller error</td><td>error</td></tr>
   <tr><td>stornvme · storahci · iaStorAC · iaStorA · iaStorVD 129</td><td>Reset to device (incl. Intel RST / VMD)</td><td>reset</td></tr>
-  <tr><td>Ntfs 50 · 55 · 98 · 140</td><td>Delayed write failed · file-system corruption · volume needs repair · failed to flush log</td><td>error</td></tr>
+  <tr><td>Ntfs 50 · 55 · 98 · 140</td><td>Delayed write failed · file-system corruption · volume needs repair · failed to flush log; 98 logged as Information is "volume checked — healthy", normal activity</td><td>error</td></tr>
   <tr><td>volmgr 161 · 46</td><td>Dump file creation failed · crash-dump init failed</td><td>error · warning</td></tr>
   <tr><td>WHEA-Logger 17 · 19 · 47</td><td>Corrected PCIe · hardware · memory error (platform)</td><td>warning</td></tr>
   <tr><td>WHEA-Logger 18 · 1</td><td>Fatal hardware error · WHEA hardware error (platform)</td><td>error</td></tr>
   <tr><td>StorPort (every ID)</td><td>All Storport Operational and Health events; state from level (critical/error → error, warning → warning, else info)</td><td>by level</td></tr>
+  <tr><td>Other disk, stornvme, storahci, NVMe, Intel RST IDs</td><td>Any other event of a storage driver, at every level; Information is the drive's normal activity</td><td>by level</td></tr>
   <tr><td>Partition 1006</td><td>Disk inventory: DiskNumber, Model, SerialNumber, Revision, BusType, Capacity, ParentId</td><td>info</td></tr>
   <tr><td>Other storage providers</td><td>Any provider whose name contains stornvme, storahci, storport, nvme, iastor or disk, at warning or above</td><td>by level</td></tr>
 </tbody></table>
@@ -1042,7 +1043,7 @@ python run_lens.py                                    <span class="c"># UI at ht
 python -m lens serve --port 8765 --no-browser
 python -m lens analyze &lt;folder or files&gt; --out report.html --tz 330
 python -m lens demo demo_logs
-python -m unittest discover -s tests -v              <span class="c"># 56 tests</span></pre>
+python -m unittest discover -s tests -v              <span class="c"># 59 tests</span></pre>
 <h2>Collect logs on the customer PC (administrator command prompt)</h2>
 <pre class="code">wevtutil epl System System.evtx
 wevtutil epl Application Application.evtx
@@ -1068,11 +1069,12 @@ docs/                  team walkthrough (.pptx / .pdf), this reference and its s
 <h2>This release (main)</h2>
 <h3>Update of 26 November 2026</h3>
 <ul>
-  <li><b>The timeline line:</b> drag it, click the timeline or step with ← → — the System, Application and Storport events within ± 5 s are listed under it with their offset and log time; 0.12 ms per move on 196,400 events.</li>
-  <li><b>Power cycles filters on one row</b>, the rest under <b>More</b>; <b>Apps &amp; updates</b> lists the latest first; big cases stay quick — tables add rows as you scroll, the timeline keeps the most important mark per slot when hundreds are in view, a case opens without re-encoding its file.</li>
-  <li><b>Whose account</b> a shutdown request ran under shows under <i>What triggered it?</i>; exports leave people's names out unless asked. <b>Quality:</b> 4 new tests (56 total).</li>
+  <li><b>The timeline line and a range:</b> the System, Application and Storport events within ± 5 s of the line, or between a range's start and end lines (<b>Range</b> or Shift-drag); 0.12 ms per move on 196,400 events.</li>
+  <li><b>What each event says</b> (Event Viewer's <i>General</i> text) is read, shown and searched; <b>the drive's normal activity</b> is kept — green ticks, <i>Show: Normal activity</i>; NTFS 98 "volume is healthy" is no longer an error.</li>
+  <li><b>Power cycles filters on one row</b>, the rest under <b>More</b>; <b>Apps &amp; updates</b> latest first; big cases stay quick — tables add rows as you scroll, busy lanes keep the most important mark per slot.</li>
+  <li><b>Whose account</b> asked for a shutdown shows under <i>What triggered it?</i>; exports leave names out. 7 new tests (59 total).</li>
 </ul>
 <h3>Earlier releases</h3>
-<p class="small"><b>2 November 2026:</b> <b>The trigger verdict stops at the power cycle before</b> — two power cycles minutes apart no longer share the same crashes; no stray scroll bar next to the tabs on Windows; 1 new test (52 total). <b>1 November 2026:</b> <b>App / update lists run cycle to cycle</b> — 100 nearest first, the rest on request, "Earlier, since …" in the reasons; <b>search by event ID</b> in every list and the drawer, and a clickable <b>Near</b> column; folders read only System, Application and Storport; the SMART check tab removed; 4 new tests (51 total). <b>October 2026:</b> <b>Which drive</b> — every storage event tied to a drive, Samsung highlighted across UI, timeline, HTML and Excel; <b>what triggered it</b> — 1074 decoding, Windows Update, installers, OEM / IT tools, crashes and hangs, with confidence and the symptom-vs-cause check; the Apps &amp; updates tab and the Excel software sheets; 27 new tests (47 total) and a demo case of 16 power cycles.</p>
+<p class="small"><b>2 November 2026:</b> <b>The trigger verdict stops at the power cycle before</b> — two power cycles minutes apart no longer share the same crashes; no stray scroll bar next to the tabs on Windows; 1 new test (52 total). <b>1 November 2026:</b> <b>App / update lists run cycle to cycle</b> — 100 nearest first, the rest on request, "Earlier, since …" in the reasons; <b>search by event ID</b> in every list and the drawer, and a clickable <b>Near</b> column; folders read only System, Application and Storport; the SMART check tab removed; 4 new tests (51 total). <b>October 2026:</b> <b>Which drive</b> — storage events tied to a drive, Samsung highlighted everywhere; <b>what triggered it</b> — 1074 decoding, updates, installers, OEM / IT tools, crashes and hangs, with confidence and the symptom-vs-cause check; the Apps &amp; updates tab and Excel software sheets; 27 new tests (47 total), a 16-power-cycle demo case.</p>
 </body>
 </html>

@@ -6,6 +6,7 @@ is listed so tests can check it. Times are UTC. All data is fictitious.
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from xml.sax.saxutils import escape
 
@@ -56,6 +57,70 @@ APP_ERR = ("AppName", "AppVersion", "AppTimeStamp", "ModuleName", "ModuleVersion
            "FaultingOffset", "ProcessId", "ProcessCreationTime", "AppPath", "ModulePath", "IntegratorReportId")
 
 
+def _disk(dev: str) -> str:
+    m = re.search(r"Harddisk(\d+)", dev)
+    return m.group(1) if m else "0"
+
+
+# what Event Viewer's General tab says, as its "Save as XML" export carries it (RenderingInfo); events not listed have
+# none, like a provider whose messages Windows could not load. d is the event's data: a dict, or a list of unnamed values
+MESSAGES = {
+    ("Microsoft-Windows-Kernel-General", 12): lambda d: f"The operating system started at system time {d['StartTime']}.",
+    ("Microsoft-Windows-Kernel-General", 13): lambda d: f"The operating system is shutting down at system time {d['StopTime']}.",
+    ("Microsoft-Windows-Kernel-General", 1): lambda d: (f"The system time has changed to {d['NewTime']} from {d['OldTime']}."
+                                                        "\n\nChange Reason: An application or system component changed the time."),
+    ("Microsoft-Windows-Kernel-Boot", 27): lambda d: f"The boot type was 0x{int(d['BootType']):x}.",
+    ("EventLog", 6005): lambda d: "The Event log service was started.",
+    ("EventLog", 6006): lambda d: "The Event log service was stopped.",
+    ("EventLog", 6008): lambda d: f"The previous system shutdown at {d[0]} on {d[1]} was unexpected.",
+    ("EventLog", 6009): lambda d: f"Microsoft (R) Windows (R) {d[0]} {d[1]}  {d[3]}.",
+    ("EventLog", 6013): lambda d: f"The system uptime is {d[4]} seconds.",
+    ("Microsoft-Windows-Winlogon", 7002): lambda d: "User Logoff Notification for Customer Experience Improvement Program",
+    ("User32", 1074): lambda d: (f"The process {d['param1']} has initiated the {d['param5']} of computer {d['param2']} on behalf "
+                                 f"of user {d['param7']} for the following reason: {d['param3']}\n Reason Code: {d['param4']}\n"
+                                 f" Shutdown Type: {d['param5']}\n Comment: {d['param6']}"),
+    ("Microsoft-Windows-Kernel-Power", 109): lambda d: "The kernel power manager has initiated a shutdown transition.\n\nShutdown Reason: Kernel API",
+    ("Microsoft-Windows-Kernel-Power", 41): lambda d: ("The system has rebooted without cleanly shutting down first. This error could be "
+                                                       "caused if the system stopped responding, crashed, or lost power unexpectedly."),
+    ("Microsoft-Windows-Kernel-Power", 42): lambda d: "The system is entering sleep.\n\nSleep Reason: Application API",
+    ("Microsoft-Windows-Kernel-Power", 107): lambda d: "The system has resumed from sleep.",
+    ("Microsoft-Windows-Power-Troubleshooter", 1): lambda d: (f"The system has returned from a low power state.\n\nSleep Time: {d['SleepTime']}"
+                                                              f"\nWake Time: {d['WakeTime']}\n\nWake Source: {d['WakeSourceText']}"),
+    ("Service Control Manager", 7036): lambda d: f"The {d['param1']} service entered the {d['param2']} state.",
+    ("Microsoft-Windows-Security-SPP", 16384): lambda d: (f"Successfully scheduled Software Protection service for re-start at "
+                                                         f"{d['param1']}. Reason: {d['param2']}."),
+    ("disk", 153): lambda d: (f"The IO operation at logical block address {d[1]} for Disk {_disk(d[0])} (PDO name: \\Device\\0000003{_disk(d[0])}) "
+                              "was retried."),
+    ("stornvme", 129): lambda d: f"Reset to device, {d[0]}, was issued.",
+    ("Microsoft-Windows-Ntfs", 98): lambda d: f"Volume {d['DriveName']} ({d['DeviceName']}) is healthy.  No action is needed.",
+    ("Microsoft-Windows-Ntfs", 50): lambda d: (f"{{Delayed Write Failed}} Windows was unable to save all the data for the file {d['DriveName']}. "
+                                               "The data has been lost. This error may be caused by a failure of your computer hardware or "
+                                               "network connection. Please try to save this file elsewhere."),
+    ("Microsoft-Windows-WHEA-Logger", 17): lambda d: ("A corrected hardware error has occurred.\n\nComponent: PCI Express Endpoint\n"
+                                                      f"Error Source: Advanced Error Reporting (PCI Express)\n\nPrimary Device Name:{d['PrimaryDeviceName']}"),
+    ("Microsoft-Windows-WER-SystemErrorReporting", 1001): lambda d: (f"The computer has rebooted from a bugcheck.  The bugcheck was: {d['param1']}. "
+                                                                    f"A dump was saved in: {d['param2']}. Report Id: {d['param3']}."),
+    ("Windows Error Reporting", 1001): lambda d: (f"Fault bucket {d[0]}, type {d[1]}\nEvent Name: {d[2]}\nResponse: {d[3]}\nCab Id: {d[4]}\n\n"
+                                                  f"Problem signature:\nP1: {d[5]}\nP2: {d[6]}\nP3: {d[7]}\nP4: {d[8]}\nP5: {d[9]}"),
+    ("Application Error", 1000): lambda d: (f"Faulting application name: {d['AppName']}, version: {d['AppVersion']}, time stamp: {d['AppTimeStamp']}\n"
+                                            f"Faulting module name: {d['ModuleName']}, version: {d['ModuleVersion']}, time stamp: {d['ModuleTimeStamp']}\n"
+                                            f"Exception code: {d['ExceptionCode']}\nFault offset: {d['FaultingOffset']}\nFaulting process id: {d['ProcessId']}\n"
+                                            f"Faulting application path: {d['AppPath']}\nFaulting module path: {d['ModulePath']}\nReport Id: {d['IntegratorReportId']}"),
+    ("Application Hang", 1002): lambda d: (f"The program {d[0]} version {d[1]} stopped interacting with Windows and was closed. To see if more "
+                                           "information about the problem is available, check the problem history in the Security and Maintenance "
+                                           "control panel."),
+    ("Microsoft-Windows-WindowsUpdateClient", 43): lambda d: f"Installation Started: Windows has started installing the following update: {d['updateTitle']}",
+    ("Microsoft-Windows-WindowsUpdateClient", 19): lambda d: f"Installation Successful: Windows successfully installed the following update: {d['updateTitle']}",
+    ("Microsoft-Windows-WindowsUpdateClient", 21): lambda d: ("Restart Required: To complete the installation of the following updates, the computer "
+                                                              "must be restarted. Until the computer has been restarted, Windows cannot search for or "
+                                                              f"download new updates:  - {d['updateTitle']}"),
+    ("MsiInstaller", 11707): lambda d: d[0],
+    ("MsiInstaller", 1038): lambda d: (f"Windows Installer requires a system restart. Product Name: {d[0]}. Product Version: {d[1]}. Product Language: "
+                                       f"{d[2]}. Manufacturer: {d[3]}. Type of System Restart: {d[4]}. Reason for Restart: {d[5]}."),
+    ("MsiInstaller", 1005): lambda d: f"The Windows Installer initiated a system restart to complete or continue the configuration of '{d[0]}'.",
+}
+
+
 def _t(day: int, hhmm: str, sec: int = 0) -> datetime:
     h, m = map(int, hhmm.split(":"))
     return datetime(2026, 9, 1, tzinfo=timezone.utc) + timedelta(days=day - 1, hours=h, minutes=m, seconds=sec)
@@ -83,12 +148,14 @@ class Log:
         else:
             body = ""
         q = f' Qualifiers="{qualifiers}"' if qualifiers is not None else ""
+        msg = MESSAGES.get((prov, eid))
+        msg = f'<RenderingInfo Culture="en-US"><Message>{escape(msg(data))}</Message></RenderingInfo>' if msg else ""
         return (f'<Event xmlns="{NS}"><System><Provider Name="{prov}"/>'
                 f"<EventID{q}>{eid}</EventID><Version>0</Version><Level>{level}</Level>"
                 f'<Task>0</Task><Opcode>0</Opcode><Keywords>0x8000000000000000</Keywords>'
                 f'<TimeCreated SystemTime="{_ts(t)}"/><EventRecordID>{rid}</EventRecordID>'
                 f'<Correlation/><Execution ProcessID="4" ThreadID="8"/><Channel>{chan}</Channel>'
-                f"<Computer>{HOST}</Computer><Security/></System><EventData>{body}</EventData></Event>")
+                f"<Computer>{HOST}</Computer><Security/></System><EventData>{body}</EventData>{msg}</Event>")
 
     def skip(self, chan, n, at):
         """Drop n record IDs just before time `at` (simulates lost records)."""
@@ -100,6 +167,8 @@ class Log:
         self.add(t + timedelta(seconds=1), "Microsoft-Windows-Kernel-Boot", 27, data={"BootType": boot_type, "LoadOptions": ""})
         self.add(t + timedelta(seconds=14), "EventLog", 6009, data=["10.00.", "22631", "", "Multiprocessor Free", "0"], qualifiers=32768)
         self.add(t + timedelta(seconds=14), "EventLog", 6005, data=[], qualifiers=32768)
+        # NTFS checks the system volume as it mounts: logged as Information, the drive's normal activity
+        self.add(t + timedelta(seconds=5), "Microsoft-Windows-Ntfs", 98, data={"DriveName": "C:", "DeviceName": "\\Device\\HarddiskVolume3"})
         if inventory:
             self.inventory(t + timedelta(seconds=3))
 

@@ -78,6 +78,10 @@ class DemoScenario(unittest.TestCase):
     def test_files_parsed(self):
         self.assertTrue(all(s["error"] is None for s in self.sources))
         self.assertEqual(len(self.sources), 4)
+        # Event Viewer's XML export carries each message; the demo has none for Storport and Partition events
+        got = {s["file"]: (s["messages"], s["events"]) for s in self.sources}
+        self.assertEqual(got["System.xml"][0], got["System.xml"][1])
+        self.assertEqual((got["Storport-Operational.xml"][0], got["Partition-Diagnostic.xml"][0]), (0, 0))
 
     def test_every_transition_classified_as_expected(self):
         got = {t["id"]: t for t in transitions(self.r)}
@@ -137,6 +141,9 @@ class DemoScenario(unittest.TestCase):
         bases = {(e["hl"], e["dev_basis"].split(" - ")[0]) for e in self.r["storage_events"]}
         self.assertTrue({("yes", "named in the event"), ("yes", "Disk 0 in the Partition inventory"),
                          ("probably", "only drive in this boot"), ("no", "Disk 1 in the Partition inventory")} <= bases)
+        # its normal activity is kept too: the Storport events naming it and the healthy-volume checks at boot
+        normal = {(e["eid"], e["hl"]) for e in self.r["storage_events"] if e["state"] == "info"}
+        self.assertTrue({(505, "yes"), (1006, "yes"), (98, "probably")} <= normal)
 
     def test_software_triggers(self):
         sw = {x["id"]: x["software"] for x in self.r["items"]}
@@ -302,6 +309,51 @@ class Rules(unittest.TestCase):
         self.assertEqual(evs[0].data["param1"], "10:00:00")
         self.assertEqual(evs[0].eid, 6008)
         self.assertEqual(evs[1].data["SubjectUserName"], "admin")
+
+    def test_message_read_with_each_event(self):
+        """RenderedXml / Event Viewer's "Save as XML" carry what the General tab says; it travels with the event."""
+        def xml(rid, extra=""):
+            return ('<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><System>'
+                    '<Provider Name="Microsoft-Windows-TerminalServices-Printers"/><EventID>1111</EventID><Level>2</Level>'
+                    f'<TimeCreated SystemTime="2019-06-20T17:00:45Z"/><EventRecordID>{rid}</EventRecordID>'
+                    '<Channel>Microsoft-Windows-TerminalServices-Printers/Admin</Channel></System>'
+                    f'<UserData><EventXML xmlns="x"><Param1>hpfax1</Param1></EventXML></UserData>{extra}</Event>')
+        words = ("Driver hpfax1 required for printer HP LJ300-400 color MFP M375-M475 Series Fax is unknown. \r\n"
+                 "Contact the administrator to install the driver before you log in again.\r\n\r\n\r\n")
+        e = parser.parse_xml_text(xml(1, f'<RenderingInfo Culture="en-US"><Message>{words}</Message><Level>Error</Level>'
+                                         '</RenderingInfo>') + xml(2, '<RenderingInfo Culture="en-US"><Level>Error</Level>'
+                                                                       '</RenderingInfo>') + xml(3), "t.xml")
+        self.assertEqual(e[0].msg, "Driver hpfax1 required for printer HP LJ300-400 color MFP M375-M475 Series Fax is "
+                                   "unknown.\nContact the administrator to install the driver before you log in again.")
+        self.assertEqual((e[0].data, e[1].msg, e[2].msg), ({"Param1": "hpfax1"}, "", ""))   # no message: none made up
+        self.assertEqual(Event.from_dict(e[0].to_dict()).msg, e[0].msg)
+        self.assertNotIn("msg", e[1].to_dict())
+        self.assertEqual(parser._message("started at system time ‎2026-01-01T08:00:00Z."),
+                         "started at system time 2026-01-01T08:00:00Z.")
+        # wevtutil stopped part way: the events read before it are kept
+        cut = "<Events>" + xml(1, f"<RenderingInfo><Message>{words}</Message></RenderingInfo>") + xml(2)[:120]
+        self.assertEqual([x.rid for x in parser.parse_xml_text(cut, "t.xml", partial=True)], [1])
+        with self.assertRaises(Exception):
+            parser.parse_xml_text(cut, "t.xml")
+
+    def test_volume_healthy_is_normal_activity(self):
+        """Ntfs 98 is logged as Information when a volume mounts healthy, and as an error when it needs repair."""
+        e = hard_cycle(after=[ev("2026-01-01T10:05:05Z", "Microsoft-Windows-Ntfs", 98, level=4, DriveName="C:")])
+        r = run(e)
+        d = transitions(r)[1]["drive"]
+        self.assertEqual((d["after"]["state"], d["after"]["info_count"], d["effect"]), ("healthy", 1, "none"))
+        self.assertEqual([(x["label"], x["state"]) for x in r["storage_events"]], [("Volume checked - healthy", "info")])
+        bad = transitions(run(hard_cycle(after=[ev("2026-01-01T10:05:05Z", "Microsoft-Windows-Ntfs", 98, level=2)])))[1]
+        self.assertEqual(bad["drive"]["after"]["state"], "error")
+
+    def test_storage_providers_normal_activity_is_kept(self):
+        """Information events of storage drivers are the drive's normal activity: listed, never a problem."""
+        r = run(hard_cycle([storport("2026-01-01T09:59:30Z", eid=505, level=4, VendorId="NVMe", ProductId="Samsung SSD 980 PRO"),
+                            ev("2026-01-01T09:59:40Z", "stornvme", 1, level=4)]))
+        self.assertEqual([(x["eid"], x["state"], x["hl"]) for x in r["storage_events"]], [(505, "info", "yes"), (1, "info", "probably")])
+        t = transitions(r)[1]
+        self.assertEqual((t["drive"]["before"]["state"], t["drive"]["cause"]), ("healthy", "no_evidence"))
+        self.assertEqual(r["counts"]["hl_events"], 0)
 
 
 class WhichDrive(unittest.TestCase):
@@ -580,10 +632,17 @@ class TimelineLogs(unittest.TestCase):
         i41 = next(e.idx for e in self.events if e.eid == 41)
         r41 = store.event_rows("tl", i41, i41 + 1)[0]
         self.assertEqual((r41["label"], r41["eid"]), ("Unclean shutdown reported", 41))   # the ID is not repeated
-        self.assertIn("BugcheckCode=", r41["text"])
+        self.assertTrue(r41["text"].startswith("The system has rebooted without cleanly shutting down first"))   # its message
+        self.assertEqual(r41["msg"], next(e.msg for e in self.events if e.eid == 41))
+        i505 = next(e.idx for e in self.events if e.eid == 505)   # no message: its key fields
+        r505 = store.event_rows("tl", i505, i505 + 1)[0]
+        self.assertIn("MiniportName=stornvme", r505["text"])
+        self.assertNotIn("msg", r505)
         sw = next(e for e in self.events if e.software and e.software["subject"])
         self.assertIn(sw.software["subject"], store.event_rows("tl", sw.idx, sw.idx + 1)[0]["text"])
         self.assertEqual(store.event_rows("tl", len(self.events), len(self.events) + 9), [])
+        # a range's lists: rows by index, wherever they are
+        self.assertEqual([r["idx"] for r in store.event_rows_at("tl", [i505, 3, len(self.events), -1])], [i505, 3])
 
 
 class Robustness(unittest.TestCase):

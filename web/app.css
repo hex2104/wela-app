@@ -63,6 +63,7 @@ main{padding:24px 28px 60px;min-width:0}
 .btn.ghost:hover{background:var(--panel-2)}
 .btn.danger:hover{border-color:var(--bad);color:var(--bad)}
 .btn.block{width:100%}
+.btn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 .btn[disabled]{opacity:.55;cursor:progress}
 
 /* ---------- cards ---------- */
@@ -162,6 +163,7 @@ table.t tr.click{cursor:pointer}
 table.t tr.click:hover td{background:var(--panel-2)}
 table.t tr.sel td{background:var(--accent-soft)}
 table.t tr.sam td{background:var(--sam-soft)}
+table.t tr.info td{color:var(--muted)}
 table.t tr.sam td:first-child,table.t tr.samrow td:first-child{box-shadow:inset 3px 0 0 var(--sam)}
 table.t tr.sam.click:hover td{background:var(--sam-soft);filter:brightness(.97)}
 .conf{display:flex;align-items:center;gap:8px;min-width:96px}
@@ -218,6 +220,7 @@ a.cyc:hover{text-decoration:underline}
 .tl-cur .lbl{position:absolute;top:-21px;left:-1px;transform:translateX(-50%);background:var(--ink);color:var(--bg);font-size:11px;font-weight:600;line-height:18px;padding:0 7px;border-radius:6px;white-space:nowrap;cursor:ew-resize;pointer-events:auto;font-variant-numeric:tabular-nums}
 .tl-cur.on .lbl,.tl-cur .lbl:hover{box-shadow:0 0 0 3px var(--accent-soft)}
 .tl-band{position:absolute;top:22px;bottom:4px;background:var(--ink);opacity:.07;pointer-events:none}
+.tl-band.rng{background:var(--accent);opacity:.11}
 .lc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
 .lc{border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:0}
 .lc-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:7px 11px;background:var(--panel-2);border-bottom:1px solid var(--line-2);font-size:13px}
@@ -245,6 +248,11 @@ a.cyc:hover{text-decoration:underline}
 .ljump{color:var(--accent);cursor:pointer;font-weight:600}
 .lmore{padding:5px 10px;color:var(--muted);font-size:11.5px;text-align:center;border-top:1px solid var(--line-2)}
 pre.lpre{margin:0 10px 8px;max-height:220px;overflow:auto}
+/* an opened event: its message as Event Viewer's General tab shows it, then its fields */
+.lmsg{margin:2px 10px 0;padding:6px 9px;border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:0 7px 7px 0;font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.lmsg.none{border-left-color:var(--line);background:none;color:var(--muted);font-size:11.5px;padding:2px 9px}
+.lday{position:sticky;top:0;z-index:1;padding:3px 10px;background:var(--panel-2);border-top:1px solid var(--line-2);border-bottom:1px solid var(--line-2);font-size:11px;font-weight:600;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.lshow{color:var(--accent);cursor:pointer;font-weight:600}
 .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:10px}
 .legend span{display:inline-flex;gap:6px;align-items:center}
 .legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
@@ -302,6 +310,7 @@ pre.lpre{margin:0 10px 8px;max-height:220px;overflow:auto}
 .reasons li{margin:3px 0}
 .raw{font-family:var(--mono);font-size:11.5px}
 .raw tr.hl td{background:var(--warn-soft)}
+.raw .lmsg{margin:6px 0 0}
 .raw td{padding:5px 8px!important}
 pre.data{margin:6px 0 0;white-space:pre-wrap;word-break:break-all;background:var(--panel-2);border-radius:8px;padding:8px;font-size:11.5px}
 

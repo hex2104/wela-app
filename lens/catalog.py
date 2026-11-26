@@ -86,8 +86,9 @@ DEFAULTS = {
         },
     },
 
-    # ---- storage events: [provider (case-insensitive), event id or "*", label, state]
-    # state precedence: missing > reset > error > slow > warning > info
+    # ---- storage events: [provider (case-insensitive), event id or "*", label, state, (label when logged as information)]
+    # state precedence: missing > reset > error > slow > warning > info. An event ID Windows also logs as Information for
+    # normal activity has a fifth item: logged at that level it is the drive's normal activity, not a problem.
     "storage_events": [
         ["disk", 7, "Bad block", "error"],
         ["disk", 11, "Controller error", "error"],
@@ -104,7 +105,7 @@ DEFAULTS = {
         ["iaStorVD", 129, "Reset to device (Intel VMD)", "reset"],
         ["Microsoft-Windows-Ntfs", 55, "File system corruption", "error"],
         ["Ntfs", 55, "File system corruption", "error"],
-        ["Microsoft-Windows-Ntfs", 98, "Volume needs repair", "error"],
+        ["Microsoft-Windows-Ntfs", 98, "Volume needs repair", "error", "Volume checked - healthy"],
         ["Microsoft-Windows-Ntfs", 140, "Failed to flush log", "error"],
         ["Microsoft-Windows-Ntfs", 50, "Delayed write failed", "error"],
         ["volmgr", 161, "Dump file creation failed", "error"],
@@ -117,7 +118,8 @@ DEFAULTS = {
         ["Microsoft-Windows-Partition", 1006, "Disk inventory", "info"],
         ["Microsoft-Windows-StorPort", "*", "Storport event", "auto"],
     ],
-    # any other provider whose name contains one of these is treated as storage
+    # any other provider whose name contains one of these is treated as storage, at every level: its Information
+    # events are the drive's normal activity
     "storage_provider_hints": ["stornvme", "storahci", "storport", "nvme", "iastor", "disk"],
     # providers that describe the platform (CPU / PCIe / memory) rather than the drive itself:
     # on their own they can make "did the drive cause it?" a *possibly*, never a *likely*
