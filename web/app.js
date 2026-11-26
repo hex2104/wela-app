@@ -202,7 +202,7 @@ async function loadCases() {
 
 /* ------------------------------------------------------------------ home */
 function renderHome() {
-  S.c = null; closeDrawer(); loadCases();
+  S.c = null; closeDrawer(); loadCases(); $("#main").classList.replace("pulsebg", "homebg") || $("#main").classList.add("homebg");
   const st = S.settings || {};
   $("#main").innerHTML = `
   <div class="home">
@@ -315,6 +315,7 @@ function renderCase() {
     </div>
     <div class="tabs">${tabs.map(([k, l, b, w]) => `<button class="tab ${S.tab === k ? "active" : ""}" data-tab="${k}">${l}${b != null ? ` <span class="badge ${w ? "warn" : ""}">${b}</span>` : ""}</button>`).join("")}</div>
     <div id="tabBody"></div>`;
+  $("#main").classList.replace("homebg", "pulsebg") || $("#main").classList.add("pulsebg");   // the faint pulse right of the tabs, on every tab
   $$(".tab").forEach((t) => (t.onclick = () => { S.tab = t.dataset.tab; renderCase(); }));
   const menu = $("#expMenu"), names = $("#expNames");
   menu.querySelector(".btn").onclick = (e) => {
@@ -345,57 +346,30 @@ function tabOverview() {
     ["hard", n.hard, "Hard shutdowns", subOf("hard")],
     ["sleep", sleepTotal, "Sleep / hibernate", [n.sleep && `${n.sleep} S3`, n.hibernate && `${n.hibernate} hibernate`, n.modern_standby && `${n.modern_standby} standby`].filter(Boolean).join(" · ")],
     ["unknown", n.unknown, "Undetermined", "type could not be decided"],
-    ["review", n.needs_review, "Needs review", "low confidence or warnings"],
   ];
-  const colors = { review: "var(--warn)" };
   const hb = Object.entries(c.hard_breakdown).sort((a, b) => b[1] - a[1]);
   const maxHb = Math.max(1, ...hb.map((x) => x[1]));
-  const review = c.items.filter((x) => x.needs_review).slice(0, 7);
   const t0 = c.coverage.start_ts, t1 = c.coverage.end_ts, span = Math.max(1, t1 - t0);
   const st = Object.entries(c.storage_counts).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const maxSt = Math.max(1, ...st.map((x) => x[1])), nSt = c.storage_events.filter((e) => e.state !== "info").length;
-  const suspects = c.items.filter(isSuspect).slice(0, 6);
-  const dstats = [["likely", "Likely", "drive"], ["possible", "Possibly", "drive"], ["no_evidence", "No drive evidence"], ["unknown", "Can't tell"]];
   const sb = Object.entries(c.software_breakdown || {}).sort((a, b) => b[1] - a[1]);
   const maxSb = Math.max(1, ...sb.map((x) => x[1]));
   const swc = Object.entries(c.software_counts || {}).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const maxSw = Math.max(1, ...swc.map((x) => x[1]));
   const disk = c.disks.find((d) => d.highlight) || c.disks[0];
   const rerun = '<div class="muted">Re-run the analysis to get this for the case.</div>';
+  /* counts and summaries only: what drove each power cycle is in the Power cycles tab, what needs review under its More */
   $("#tabBody").innerHTML = `
     <div class="tiles">${tiles.map(([k, v, l, s]) => `
-      <div class="card tile" data-f="${k}" style="--c:${colors[k] || TYPES[k].color}">
+      <div class="card tile" data-f="${k}" style="--c:${TYPES[k].color}">
         <div class="v">${v}</div><div class="l">${l}</div><div class="s">${esc(s || "")}</div></div>`).join("")}</div>
     <div class="grid g2">
-      <div class="card span2"><div class="card-h"><h3>Did the drive cause it?</h3><span class="muted small">hard shutdowns &amp; undetermined · drive checked ${esc(c.settings.drive_window_s)}s before power-off and after boot</span></div>
-        <div class="card-b">${n.drive_likely === undefined ? '<div class="muted">Re-run the analysis to get the drive assessment for this case.</div>' : `
-          <div class="dstats">${dstats.map(([k, l, f]) => `<div class="dstat ${k}" ${f ? `data-f="${f}"` : ""}><b>${n["drive_" + k]}</b><span>${l}</span></div>`).join("")}
-            <div class="dstat effect" data-f="effect"><b>${n.drive_effect}</b><span>drive errors right after boot / wake</span></div>
-            ${n.hl_cycles !== undefined ? `<div class="dstat hl" data-f="samsung" title="${n.hl_suspect} of them with the drive suspected"><b>${n.hl_cycles}</b><span>with ${esc(HV())} drive problems</span></div>` : ""}</div>
-          <div class="muted small" style="margin:2px 0 6px">“No drive evidence” is not proof the drive is fine — a drive that froze suddenly may not have been able to save its last events. Cross-check its SMART and error logs.</div>
-          ${suspects.length ? suspects.map((it) => `
-            <div class="list-row" data-id="${it.id}">${chip(it.type)}<div style="flex:1;min-width:0"><div class="lt">${esc(it.id)} · ${esc(it.subtype)}</div>
-              <div class="muted small">${fmt(it.time)} · ${esc(it.drive.reasons[0] || "")}</div></div><span class="chips">${hlChip(it.drive)}${causeChip(it.drive)}</span></div>`).join("")
-            : '<div class="muted" style="padding-top:8px">No power cycle points at the drive.</div>'}`}
-        </div></div>
       <div class="card"><div class="card-h"><h3>Hard shutdown causes</h3><span class="muted small">${n.hard} total</span></div>
-        <div class="card-b">${hb.length ? hb.map(([k, v]) => `<div class="hbar"><span>${esc(k)}</span><div class="track"><b style="width:${(v / maxHb) * 100}%;background:var(--bad)"></b></div><span class="n">${v}</span></div>`).join("")
+        <div class="card-b">${hb.length ? `<div class="scrl">${hb.map(([k, v]) => `<div class="hbar"><span>${esc(k)}</span><div class="track"><b style="width:${(v / maxHb) * 100}%;background:var(--bad)"></b></div><span class="n">${v}</span></div>`).join("")}</div>`
           : '<div class="muted">No hard shutdowns found.</div>'}</div></div>
       <div class="card"><div class="card-h"><h3>What triggered it?</h3><span class="muted small">${n.software === undefined ? "" : `${n.software} triggered by software, not the user`}</span></div>
-        <div class="card-b">${c.software_breakdown === undefined ? rerun : sb.length ? sb.map(([k, v]) => `<div class="hbar trig" data-sw="${esc(k)}" title="Show these power cycles"><span>${esc(swLabel(k))}</span><div class="track"><b style="width:${(v / maxSb) * 100}%;background:${["none", "unknown", "not_logged"].includes(k) ? "var(--grey)" : k === "user" ? "var(--ok)" : "var(--accent)"}"></b></div><span class="n">${v}</span></div>`).join("")
+        <div class="card-b">${c.software_breakdown === undefined ? rerun : sb.length ? `<div class="scrl">${sb.map(([k, v]) => `<div class="hbar trig" data-sw="${esc(k)}" title="Show these power cycles"><span>${esc(swLabel(k))}</span><div class="track"><b style="width:${(v / maxSb) * 100}%;background:${["none", "unknown", "not_logged"].includes(k) ? "var(--grey)" : k === "user" ? "var(--ok)" : "var(--accent)"}"></b></div><span class="n">${v}</span></div>`).join("")}</div>`
           : '<div class="muted">No power cycles found.</div>'}</div></div>
-      <div class="card"><div class="card-h"><h3>Needs review</h3><span class="muted small">${n.needs_review} item(s)</span></div>
-        <div class="card-b" style="padding-top:6px;padding-bottom:6px">${review.length ? review.map((it) => `
-          <div class="list-row" data-id="${it.id}">${chip(it.type)}<div style="flex:1;min-width:0"><div class="lt">${esc(it.subtype)}</div>
-            <div class="muted small">${fmt(it.time)} · ${esc(it.flags[0]?.text || "low confidence")}</div></div>${confBar(it.confidence)}</div>`).join("")
-          : '<div class="muted" style="padding:10px 0">Nothing flagged — every verdict has solid evidence.</div>'}</div></div>
-      <div class="card"><div class="card-h"><h3>Log coverage</h3><span class="muted small">${tzLabel()}</span></div>
-        <div class="card-b">${c.channels.filter((ch) => ch.kind !== "other" || ch.events > 0).map((ch) => `
-          <div class="cov"><span title="${esc(ch.channel)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortChan(ch.channel))} <span class="muted">· ${ch.events.toLocaleString()}</span></span>
-          <div class="track"><b class="${ch.kind}" style="left:${((ch.start_ts - t0) / span) * 100}%;width:${Math.max(0.6, ((ch.end_ts - ch.start_ts) / span) * 100)}%"></b></div></div>`).join("")}
-          <div class="cov" style="margin-top:2px"><span></span><div class="axis"><span>${fmt(c.coverage.start, false)}</span><span>${fmt(c.coverage.end, false)}</span></div></div>
-          ${c.integrity.missing_channels.length ? `<div class="flagbox warn" style="margin-top:10px">${ICON.warn}<span>Missing: ${esc(c.integrity.missing_channels.join(", "))} log — related checks are limited.</span></div>` : ""}
-        </div></div>
       <div class="card"><div class="card-h"><h3>Storage events</h3><span class="muted small">${nSt} warning/error events${nSt < c.storage_events.length ? ` · ${(c.storage_events.length - nSt).toLocaleString()} normal activity` : ""}</span></div>
         <div class="card-b">${st.length ? st.map(([k, v]) => `<div class="hbar"><span>${esc(k)}</span><div class="track"><b style="width:${(v / maxSt) * 100}%;background:var(--warn)"></b></div><span class="n">${v}</span></div>`).join("")
           : '<div class="muted">No storage warnings or errors logged.</div>'}
@@ -405,10 +379,25 @@ function tabOverview() {
       <div class="card"><div class="card-h"><h3>Apps &amp; updates</h3><span class="muted small">${n.software_events === undefined ? "" : `${n.software_events} crash / hang / failure / restart events`}</span></div>
         <div class="card-b">${c.software_counts === undefined ? rerun : swc.length ? swc.map(([k, v]) => `<div class="hbar"><span>${esc(k)}</span><div class="track"><b style="width:${(v / maxSw) * 100}%;background:var(--purple)"></b></div><span class="n">${v}</span></div>`).join("")
           : `<div class="muted">No app crashes or hangs, failed updates or service failures logged${(c.channels || []).some((ch) => ch.kind === "application") ? "" : " (no Application log in this case)"}.</div>`}</div></div>
+      <div class="card span2"><div class="card-h"><h3>Log coverage</h3><span class="muted small">${fmt(c.coverage.start, false)} → ${fmt(c.coverage.end, false)} (${tzLabel()})</span></div>
+        <div class="card-b"><div class="covs">${c.channels.filter((ch) => ch.kind !== "other" || ch.events > 0).map((ch) => `
+          <div class="cov" data-ch="${esc(ch.channel)}" title="${esc(`${ch.channel}: ${fmt(ch.start, false)} → ${fmt(ch.end, false)}`)}"><div class="cov-l"><span>${esc(shortChan(ch.channel))}</span><span class="muted">${ch.events.toLocaleString()}</span></div>
+          <div class="track"><b class="${ch.kind}" style="left:${((ch.start_ts - t0) / span) * 100}%;width:${Math.max(0.6, ((ch.end_ts - ch.start_ts) / span) * 100)}%"></b></div></div>`).join("")}</div>
+          <div class="cov-d" id="covD"></div>
+          ${c.integrity.missing_channels.length ? `<div class="flagbox warn" style="margin-top:10px">${ICON.warn}<span>Missing: ${esc(c.integrity.missing_channels.join(", "))} log — related checks are limited.</span></div>` : ""}
+        </div></div>
     </div>`;
-  $$(".tile, .dstat[data-f]").forEach((t) => (t.onclick = () => { S.filter = t.dataset.f; S.tab = "cycles"; renderCase(); }));
+  $$(".tile").forEach((t) => (t.onclick = () => { S.filter = t.dataset.f; S.tab = "cycles"; renderCase(); }));
   $$(".hbar.trig").forEach((t) => (t.onclick = () => { S.filter = "sw:" + t.dataset.sw; S.tab = "cycles"; renderCase(); }));
-  $$(".list-row").forEach((r) => (r.onclick = () => openDetail(r.dataset.id)));
+  /* a click on a log shows when it starts and ends; a second click hides it */
+  const covDates = () => {
+    const ch = c.channels.find((x) => x.channel === S.v.cov);
+    $$(".cov").forEach((x) => x.classList.toggle("on", x.dataset.ch === S.v.cov));
+    $("#covD").innerHTML = !ch ? "" : ch.start ? `<b>${esc(shortChan(ch.channel))}</b> from <b>${fmt(ch.start)}</b> to <b>${fmt(ch.end)}</b> (${tzLabel()}) · ${fmtDur(ch.end_ts - ch.start_ts)}`
+      : `<b>${esc(shortChan(ch.channel))}</b>: no events`;
+  };
+  $$(".cov").forEach((x) => (x.onclick = () => { S.v.cov = S.v.cov === x.dataset.ch ? null : x.dataset.ch; covDates(); }));
+  covDates();
 }
 function subOf(type) {
   const m = {};
@@ -476,23 +465,39 @@ function tabCycles() {
   bind(["cyQ"], drawCycleRows);
   drawCycleRows();
 }
+/* the strongest lead, in one cell: for a hard or undetermined power cycle the drive (else the software), for an orderly
+   one who asked for it (the account it ran under is in the panel). Both leads and their strength are in the tooltip */
+function causeCell(it) {
+  const d = it.drive || {}, s = it.software || {}, quiet = (t) => `<span class="muted small">${esc(t || "—")}</span>`;
+  if (it.type === "sleep") return quiet("—");
+  const drive = ["likely", "possible"].includes(d.cause) ? `<span class="chip ${CAUSE_CLS[d.cause]}">Drive · ${esc(d.cause_label)}</span>`
+    + (isHl(d.highlight) ? hlChip({ ...d, highlight_label: d.highlight === "yes" ? HV() : `${HV()}?` }) : "") : "";
+  const sw = SW_CLS[s.strength] ? `<span class="chip ${SW_CLS[s.strength]}">${esc(s.label)}</span>` : "";
+  return it.type === "hard" || it.type === "unknown" ? drive || sw || quiet(d.cause_label) : sw || quiet(s.label);
+}
+function causeTip(it) {
+  const d = it.drive || {}, s = it.software || {}, out = [];
+  if (it.type !== "sleep") out.push(`Drive caused it? ${d.cause_label ?? "—"}`, `What triggered it? ${s.label ?? "—"}${SW_CLS[s.strength] ? ` · ${s.strength_label}${swConf(s)}` : ""}`);
+  if (["errors", "missing", "warnings"].includes(d.effect)) out.push(`Drive: ${d.effect_label}`);
+  if (isHl(d.highlight)) out.push(`Which drive? ${d.highlight_label}`);   // the teal stripe: the problems were on the Samsung drive
+  return out.join("\n");
+}
+/* one line a row: the type with its detail (cut short, whole in the tooltip), the strongest lead, warnings as one mark */
 function cycleRow(it) {
-  const warn = it.flags.filter((x) => x.severity === "warn").length;
-  const hl = isHl(it.drive?.highlight) ? hlChip({ ...it.drive, highlight_label: it.drive.highlight === "yes" ? HV() : `${HV()}?` }) : "";
-  const init = it.software?.initiator, acc = init?.account_kind === "user" ? init.user : "";   // a person's account; Windows' own is in the chip
-  return `<tr class="click ${S.selected === it.id ? "sel" : ""} ${hl ? "samrow" : ""}" data-id="${it.id}">
-    <td class="mono">${it.id}</td><td style="white-space:nowrap">${fmt(it.time)}</td><td>${chip(it.type)}</td>
-    <td>${esc(it.subtype)}${it.wake_source ? `<div class="muted small">wake: ${esc(it.wake_source)}</div>` : ""}</td>
-    <td style="white-space:nowrap">${esc(it.type === "sleep" ? it.duration : it.gap)}</td>
-    <td>${confBar(it.confidence)}</td><td><span class="chips">${stateChip(it.drive?.state)}${hl}</span></td>
-    <td>${it.type === "sleep" ? '<span class="muted">—</span>' : causeChip(it.drive)}</td>
-    <td>${it.type === "sleep" || !it.software ? '<span class="muted">—</span>' : `${swChip(it.software)}${SW_CLS[it.software.strength] ? `<div class="muted small">${esc(it.software.strength_label + swConf(it.software) + (acc ? ` · ${acc}` : ""))}</div>` : ""}`}</td>
-    <td>${warn ? `<span class="flagdot">${ICON.warn}${warn}</span>` : it.flags.length ? `<span class="muted small">${it.flags.length} note${it.flags.length > 1 ? "s" : ""}</span>` : ""}</td></tr>`;
+  const warns = it.flags.filter((x) => x.severity === "warn").map((x) => x.text);
+  const what = [it.subtype !== TYPES[it.type]?.short && it.subtype, it.wake_source && `woke by ${it.wake_source}`].filter(Boolean).join(" · ");   // a bare "Restart" would repeat the chip
+  return `<tr class="click ${S.selected === it.id ? "sel" : ""} ${hlCycle(it) ? "samrow" : ""}" data-id="${it.id}">
+    <td class="mono">${it.id}${warns.length ? `<span class="flagdot" title="${esc(warns.join("\n"))}">${ICON.warn}</span>` : ""}</td>
+    <td>${fmt(it.time)}</td>
+    <td class="what" title="${esc(what)}"><div class="cy-w">${chip(it.type)}<span>${esc(what)}</span></div></td>
+    <td>${esc(it.type === "sleep" ? it.duration : it.gap)}</td>
+    <td title="${esc(causeTip(it))}"><span class="chips">${causeCell(it)}</span></td>
+    <td>${confBar(it.confidence)}</td></tr>`;
 }
 function drawCycleRows() {
   const rows = filtered();
   $("#cyN").textContent = matcher(S.v.cyQ) ? `${rows.length.toLocaleString()} found` : "";
-  pageRows($("#cyc"), `<thead><tr><th>ID</th><th>Time (${tzLabel()})</th><th>Type</th><th>Detail</th><th>Off / asleep</th><th>Confidence</th><th>Drive</th><th>Drive caused it?</th><th>Software trigger</th><th>Flags</th></tr></thead>`,
+  pageRows($("#cyc"), `<thead><tr><th>ID</th><th>When (${tzLabel()})</th><th>What happened</th><th>Off for</th><th>Likely cause</th><th>Confidence</th></tr></thead>`,
     rows, cycleRow, "Nothing matches this filter.");
 }
 

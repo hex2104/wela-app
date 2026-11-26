@@ -320,22 +320,25 @@ def to_xlsx(result: dict, offset_min: int = 0) -> bytes:
 
 
 # ----------------------------------------------------------------- HTML report
+# the app's "Soft indigo" colours and pastel chips (web/app.css), so a shared report looks like the app
 CSS = """
-:root{--ink:#1b2130;--muted:#5d6577;--line:#e3e6ee;--bg:#f6f7fb;--card:#fff;--navy:#1428a0;
---ok:#16865a;--warn:#b7791f;--bad:#c0392b;--purple:#6b4fbb;--grey:#7a8194}
+:root{--ink:#1f2433;--muted:#666d80;--line:#e5e8f2;--bg:#f5f6fb;--card:#fff;--card-2:#f8f9fd;--accent:#4655c4;--accent-soft:#eceffd;
+--ok:#277656;--ok-soft:#e7f5ee;--warn:#9a6418;--warn-soft:#fdf3e2;--bad:#b2453c;--bad-soft:#fcecea;
+--purple:#6e56bd;--purple-soft:#f1edfc;--grey:#646b7d;--grey-soft:#f0f2f5;--sam:#187682;--sam-soft:#e2f4f6}
 *{box-sizing:border-box}body{margin:0;font:14px/1.45 "Segoe UI",system-ui,sans-serif;color:var(--ink);background:var(--bg)}
-.wrap{max-width:1180px;margin:0 auto;padding:28px 20px}h1{margin:0;color:var(--navy);font-size:24px}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px}h1{margin:0;color:var(--accent);font-size:24px}
 .sub{color:var(--muted);margin:4px 0 20px}.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
 .tile{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;border-top:4px solid var(--c)}
 .tile b{display:block;font-size:28px;line-height:1.1}.tile span{color:var(--muted);font-size:12.5px}
 h2{font-size:16px;margin:26px 0 10px}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-th{background:var(--navy);color:#fff;text-align:left;font-weight:600;font-size:12.5px;padding:8px 10px}
-td{padding:7px 10px;border-top:1px solid var(--line);vertical-align:top;font-size:13px}tr:nth-child(even) td{background:#fafbfe}
-.chip{display:inline-block;padding:1px 8px;border-radius:999px;color:#fff;font-size:11.5px;font-weight:600;white-space:nowrap}
-.shutdown{background:var(--ok)}.restart{background:var(--navy)}.hard{background:var(--bad)}.unknown{background:var(--grey)}.sleep{background:var(--purple)}
-.healthy{background:var(--ok)}.slow,.warning{background:var(--warn)}.reset,.error,.missing{background:var(--bad)}.nodata,.info{background:var(--grey)}
+th{background:var(--card-2);color:var(--muted);text-align:left;font-weight:600;font-size:12.5px;padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:7px 10px;border-top:1px solid var(--line);vertical-align:top;font-size:13px}tr:nth-child(even) td{background:#fbfbfe}
+.chip{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11.5px;font-weight:600;white-space:nowrap}
+.shutdown,.healthy{background:var(--ok-soft);color:var(--ok)}.restart{background:var(--accent-soft);color:var(--accent)}
+.hard,.reset,.error,.missing{background:var(--bad-soft);color:var(--bad)}.sleep{background:var(--purple-soft);color:var(--purple)}
+.unknown,.nodata,.info{background:var(--grey-soft);color:var(--grey)}.slow,.warning{background:var(--warn-soft);color:var(--warn)}
 .small{color:var(--muted);font-size:12px}.flag{color:var(--warn)}
-:root{--sam:#0a7f8f;--sam-soft:#d3eff3}.samchip{background:var(--sam)}.samp{background:#fff;color:var(--sam);box-shadow:inset 0 0 0 1px var(--sam)}
+.samchip{background:var(--sam);color:#fff}.samp{background:var(--sam-soft);color:var(--sam);box-shadow:inset 0 0 0 1px var(--sam)}
 tr.sam td{background:var(--sam-soft)!important}tr.sam td:first-child{box-shadow:inset 4px 0 0 var(--sam)}
 .legend{font-size:12px;color:var(--muted);margin:-4px 0 8px}
 """
@@ -345,7 +348,7 @@ def to_html(result: dict, offset_min: int = 0) -> bytes:
     e = html.escape
     c = result["counts"]
     tz = _tz_label(offset_min)
-    tiles = [("Normal shutdowns", c["shutdown"], "var(--ok)"), ("Restarts", c["restart"], "var(--navy)"),
+    tiles = [("Normal shutdowns", c["shutdown"], "var(--ok)"), ("Restarts", c["restart"], "var(--accent)"),
              ("Hard shutdowns", c["hard"], "var(--bad)"),
              ("Sleep / hibernate", c["sleep"] + c["hibernate"] + c["modern_standby"], "var(--purple)"),
              ("Undetermined", c["unknown"], "var(--grey)"), ("Needs review", c["needs_review"], "var(--warn)")]
