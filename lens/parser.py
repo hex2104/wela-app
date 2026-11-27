@@ -118,27 +118,30 @@ def _event_from_elem(ev: ET.Element, source: str) -> Event | None:
                  computer=sys.intern(comp), data=payload, msg=msg, source=source)
 
 
-def parse_xml_text(text: str, source: str, partial: bool = False) -> List[Event]:
+def parse_xml_text(text: str, source: str, partial: bool = False, tick=None) -> List[Event]:
     """Parse a blob of XML containing <Event> elements (with or without a root).
-    partial: the text may stop part way - keep the events read up to there."""
-    return _parse_pieces((text[i:i + _PIECE] for i in range(0, len(text), _PIECE)), source, partial)
+    partial: the text may stop part way - keep the events read up to there.
+    tick(events, fraction): called after each piece, for a progress view."""
+    return _parse_pieces((text[i:i + _PIECE] for i in range(0, len(text), _PIECE)), source, partial, tick, len(text))
 
 
-def parse_xml_file(path: str) -> List[Event]:
+def parse_xml_file(path: str, tick=None) -> List[Event]:
     """Parse an XML log file a piece at a time: the whole file is never in memory."""
     with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
-        return _parse_pieces(iter(lambda: fh.read(_PIECE), ""), path)
+        return _parse_pieces(iter(lambda: fh.read(_PIECE), ""), path, tick=tick, total=os.path.getsize(path))
 
 
-def _parse_pieces(pieces: Iterator[str], source: str, partial: bool = False) -> List[Event]:
+def _parse_pieces(pieces: Iterator[str], source: str, partial: bool = False, tick=None, total: int = 0) -> List[Event]:
     """Events from XML text that arrives in pieces. No copy of the whole text is made, and each event's elements
-    are dropped as soon as it is read, so memory holds the events, not the XML."""
+    are dropped as soon as it is read, so memory holds the events, not the XML.
+    tick(events read, fraction of total read) after each piece, when given."""
     source = os.path.basename(source)
     p = ET.XMLPullParser(events=("end",))
     out: List[Event] = []
-    first, wrapped = True, False
+    first, wrapped, done = True, False, 0
     try:
         for s in pieces:
+            done += len(s)
             s = _INVALID_XML.sub("", s)
             if first:
                 s = re.sub(r"^\s*<\?xml[^>]*\?>", "", s.lstrip("\ufeff"))
@@ -148,6 +151,8 @@ def _parse_pieces(pieces: Iterator[str], source: str, partial: bool = False) -> 
                 first = False
             p.feed(s)
             _take(p, out, source)
+            if tick:
+                tick(len(out), min(1.0, done / total) if total else None)
         if first:                                                    # no text at all: no events
             p.feed("<Events>")
             wrapped = True
@@ -189,26 +194,26 @@ def _wevtutil(exe: str, path: str, fmt: str) -> Tuple[str, str]:
     return _decode(proc.stdout), err
 
 
-def _parse_evtx_wevtutil(path: str) -> List[Event]:
+def _parse_evtx_wevtutil(path: str, tick=None) -> List[Event]:
     exe = shutil.which("wevtutil")
     if not exe:
         raise RuntimeError("wevtutil not found")
     # RenderedXml adds each event's message, worded by this PC's Windows (empty for a provider it does not have)
     text, err = _wevtutil(exe, path, "RenderedXml")
     if not err:
-        return parse_xml_text(text, path)
+        return parse_xml_text(text, path, tick=tick)
     # it stopped part way (a provider whose messages Windows could not load): read every event, keep the words it got
     raw, err = _wevtutil(exe, path, "xml")
     if err:
         raise RuntimeError(err)
-    events = parse_xml_text(raw, path)
+    events = parse_xml_text(raw, path, tick=tick)
     words = {e.rid: e.msg for e in parse_xml_text(text, path, partial=True) if e.msg and e.rid is not None}
     for e in events:
         e.msg = words.get(e.rid, "")
     return events
 
 
-def _parse_evtx_powershell(path: str) -> List[Event]:
+def _parse_evtx_powershell(path: str, tick=None) -> List[Event]:
     exe = shutil.which("powershell") or shutil.which("pwsh")
     if not exe:
         raise RuntimeError("PowerShell not found")
@@ -224,10 +229,10 @@ def _parse_evtx_powershell(path: str) -> List[Event]:
                           capture_output=True, creationflags=flags)
     if proc.returncode != 0 and not proc.stdout:
         raise RuntimeError(_decode(proc.stderr).strip() or "PowerShell failed")
-    return parse_xml_text(_decode(proc.stdout), path)
+    return parse_xml_text(_decode(proc.stdout), path, tick=tick)
 
 
-def _parse_evtx_python(path: str) -> List[Event]:
+def _parse_evtx_python(path: str, tick=None) -> List[Event]:
     try:
         import Evtx.Evtx as evtx  # optional: pip install python-evtx
     except ImportError as exc:
@@ -243,10 +248,12 @@ def _parse_evtx_python(path: str) -> List[Event]:
             e = _event_from_elem(elem, os.path.basename(path))
             if e:
                 out.append(e)
+                if tick and len(out) % 2000 == 0:   # how far into the file is not known: the count is
+                    tick(len(out), None)
     return out
 
 
-def parse_evtx(path: str) -> Tuple[List[Event], str]:
+def parse_evtx(path: str, tick=None) -> Tuple[List[Event], str]:
     errors = []
     readers = []
     if os.name == "nt":
@@ -254,7 +261,7 @@ def parse_evtx(path: str) -> Tuple[List[Event], str]:
     readers.append(("python-evtx", _parse_evtx_python))
     for name, fn in readers:
         try:
-            return fn(path), name
+            return fn(path, tick), name
         except Exception as exc:  # try the next reader
             errors.append(f"{name}: {exc}")
     raise RuntimeError("; ".join(errors))
@@ -292,24 +299,41 @@ def expand_paths(paths: Iterable[str]) -> Tuple[List[str], List[str]]:
     return files, skipped
 
 
-def load(paths: Iterable[str]) -> Tuple[List[Event], List[dict], List[str]]:
-    """Return (events, per-file source info, files skipped in folders)."""
+def _size(path: str) -> int:
+    try:
+        return os.path.getsize(path)
+    except OSError:   # reading it will say what is wrong
+        return 0
+
+
+def load(paths: Iterable[str], progress=None) -> Tuple[List[Event], List[dict], List[str]]:
+    """Return (events, per-file source info, files skipped in folders).
+    progress("read", file=, i=, n=, events=, frac=, all=): which file of how many, the events read so far, how far
+    into the file (None while Windows is still exporting a .evtx) and through all of them. It may raise to stop."""
     with no_gc():
-        return _load(paths)
+        return _load(paths, progress)
 
 
-def _load(paths: Iterable[str]) -> Tuple[List[Event], List[dict], List[str]]:
+def _load(paths: Iterable[str], progress=None) -> Tuple[List[Event], List[dict], List[str]]:
     events: List[Event] = []
     sources: List[dict] = []
     files, skipped = expand_paths(paths)
-    for f in files:
+    sizes = [_size(f) for f in files] if progress else []
+    for k, f in enumerate(files):
         info = {"file": os.path.basename(f), "path": f, "events": 0, "reader": None, "error": None}
+        tick = None
+        if progress:   # all: how far through every file, by size - one big System log is most of the work
+            def tick(n, frac, name=info["file"], k=k):
+                done = sum(sizes[:k]) + (frac or 0) * sizes[k]
+                progress("read", file=name, i=k, n=len(files), events=len(events) + n, frac=frac,
+                         all=round(done / max(1, sum(sizes)), 4))
+            tick(0, 0.0 if f.lower().endswith(".xml") else None)
         try:
             if f.lower().endswith(".xml"):
-                evs = parse_xml_file(f)
+                evs = parse_xml_file(f, tick)
                 info["reader"] = "xml"
             else:
-                evs, info["reader"] = parse_evtx(f)
+                evs, info["reader"] = parse_evtx(f, tick)
             info["events"] = len(evs)
             info["messages"] = sum(1 for e in evs if e.msg)
             info["channels"] = sorted({e.channel for e in evs})

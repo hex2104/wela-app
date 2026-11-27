@@ -27,6 +27,7 @@ body{font:14px/1.5 "Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,san
 button,input,select,textarea{font:inherit;color:inherit}
 svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .muted{color:var(--muted)} .small{font-size:12.5px} .pad{padding:8px 10px} .mono{font-family:var(--mono);font-size:12.5px}
+[hidden]{display:none!important}
 
 /* ---------- top bar ---------- */
 .topbar{height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
@@ -106,6 +107,34 @@ details.adv summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:
 .step b{display:block;font-size:13.5px;margin-bottom:3px}
 .step span{color:var(--muted);font-size:12.5px}
 .err{background:var(--bad-soft);color:var(--bad);border-radius:9px;padding:10px 12px;margin-top:12px;font-size:13px;display:none}
+/* the analysis as it runs: in place of the buttons, the logo's pulse traced, what it is doing, the time and Cancel;
+   the four steps below light up in turn (done ones get a tick) */
+.prog{margin-top:12px;border:1px solid var(--line);border-radius:12px;padding:12px 14px 14px;background:var(--panel-2)}
+.prog-h{display:flex;align-items:center;gap:14px}
+.prog-pulse{width:64px;height:24px;flex:none;stroke-width:2.2}
+.prog-pulse .bg{stroke:var(--line)}
+.prog-pulse .fg{stroke:var(--accent);stroke-dasharray:28 72;animation:trace 1.5s linear infinite}
+.prog.done .prog-pulse .fg{stroke:var(--ok);stroke-dasharray:none;animation:none}
+@keyframes trace{from{stroke-dashoffset:100}to{stroke-dashoffset:0}}
+.prog-t{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.4}
+.prog-t b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prog-t span{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:17px}
+.prog-clock{color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.prog-bar{position:relative;height:6px;border-radius:9px;background:var(--line-2);overflow:hidden;margin-top:12px}
+.prog-bar b{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:9px;overflow:hidden;background:linear-gradient(90deg,var(--accent-2),var(--sam));transition:width .3s ease}
+.prog-bar b::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);transform:translateX(-100%);animation:shimmer 1.3s ease-in-out infinite}
+.prog.done .prog-bar b::after{animation:none}
+@keyframes shimmer{to{transform:translateX(100%)}}
+.steps.live .step{opacity:.5;transition:opacity .2s,border-color .2s,box-shadow .2s}
+.steps.live .step.run,.steps.live .step.done{opacity:1}
+.step.run{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft),var(--shadow)}
+.step.run .n{animation:beat 1.2s ease-in-out infinite}
+@keyframes beat{50%{box-shadow:0 0 0 5px var(--accent-soft)}}
+.step .n i{font-style:normal}
+.step .n svg{display:none;width:15px;height:15px;stroke-width:2.6}
+.step.done .n{background:var(--ok-soft);color:var(--ok)}
+.step.done .n i{display:none}.step.done .n svg{display:block}
+@media (prefers-reduced-motion:reduce){.prog-pulse .fg,.prog-bar b::after,.step.run .n{animation:none}.prog-pulse .fg{stroke-dasharray:none}}
 
 /* ---------- case header + tabs ---------- */
 .case-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px}
@@ -191,6 +220,10 @@ table.t tr.sam.click:hover td{background:var(--sam-soft);filter:brightness(.97)}
 .cy-w span:last-child{overflow:hidden;text-overflow:ellipsis;min-width:0}
 #cyc .chips{flex-wrap:nowrap}
 #cyc .flagdot{margin-left:6px;vertical-align:-2px}
+/* When and Off for sort the list too; the arrow marks the order in use */
+#cyc th[data-sort]{cursor:pointer;user-select:none}
+#cyc th[data-sort]:hover{color:var(--accent)}
+#cyc .srt{font-style:normal;margin-left:4px;color:var(--accent)}
 .empty{padding:40px 20px;text-align:center;color:var(--muted)}
 td.near{font-size:12px;color:var(--muted);white-space:nowrap}
 a.cyc{color:var(--accent);font-weight:600;cursor:pointer;text-decoration:none}

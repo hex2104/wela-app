@@ -1442,9 +1442,14 @@ class Analyzer:
         self.disks = out
 
     # ------------------------------------------------------------------ run
-    def run(self) -> dict:
+    def run(self, progress=None) -> dict:
+        """progress(step, **counts) as each step starts - merge, classify, correlate, review - for a progress view.
+        It may raise to stop the analysis."""
+        step = progress or (lambda *a, **k: None)
+        step("merge", events=len(self.events))
         self.tag()
         self.integrity()
+        step("classify", events=len(self.events))
         self.find_boots()
         self.build_sessions()
         self.identify()
@@ -1453,8 +1458,11 @@ class Analyzer:
         for prefix, xs in (("T", self.transitions), ("S", self.sleeps)):   # numbered first: lists name their neighbours
             for i, x in enumerate(xs):
                 x["id"] = f"{prefix}{i + 1}"
+        found = {"events": len(self.events), "power_cycles": len(self.transitions), "sleeps": len(self.sleeps)}
+        step("correlate", **found)
         self.correlate()
         self.assess()
+        step("review", **found)
         self.quality()
         self.inventory()
         thr = self.s["review_threshold"]
@@ -1525,6 +1533,8 @@ class Analyzer:
         }
 
 
-def analyze(events: List[Event], cfg: dict = None, sources: List[dict] = None) -> dict:
+def analyze(events: List[Event], cfg: dict = None, sources: List[dict] = None, progress=None) -> dict:
     with no_gc():
-        return Analyzer(events, cfg, sources).run()
+        if progress:   # the logs are put in one time order first
+            progress("merge", events=len(events))
+        return Analyzer(events, cfg, sources).run(progress)

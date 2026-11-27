@@ -42,13 +42,15 @@ def new_id(name: str) -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + slug
 
 
-def save(case_id: str, result: dict, events: List[Event]) -> None:
+def save(case_id: str, result: dict, events: List[Event], tick=None) -> None:
+    """tick(fraction of the events written), now and then, for a progress view."""
     d = _dir(case_id)
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "result.json"), "w", encoding="utf-8") as fh:
         json.dump(result, fh, ensure_ascii=False)
     with no_gc():
-        case = _write(d, (e.to_dict() for e in events))   # one event at a time: never a second copy of them all
+        case = _write(d, (e.to_dict() for e in events),   # one event at a time: never a second copy of them all
+                      tick and (lambda n: tick(min(1.0, n / max(1, len(events))))))
     _commit(d)
     with _lock:   # the case opens next: keep it instead of reading it back
         _cache.clear()
@@ -169,9 +171,9 @@ def _ms(t: str, days: dict) -> int:
     return (((d * 24 + int(t[11:13])) * 60 + int(t[14:16])) * 60 + int(t[17:19])) * 1000 + int(t[20:23])
 
 
-def _write(d: str, rows: Iterable[dict]) -> _Case:
+def _write(d: str, rows: Iterable[dict], tick=None) -> _Case:
     """Write events (dicts, in time order) as compressed blocks, with the timeline index and the event IDs in the case,
-    to .tmp files that _commit puts in place."""
+    to .tmp files that _commit puts in place. tick(events written) every 16 blocks, when given."""
     ev, ix, meta = _paths(d)
     off, parts, lines, days, kinds = [0], [], [], {}, {}
     ms, steps, letters, ids = array("q"), [], [], {}
@@ -183,6 +185,8 @@ def _write(d: str, rows: Iterable[dict]) -> _Case:
         parts.append(part)
         off.append(off[-1] + len(part))
         lines.clear()
+        if tick and len(parts) % 16 == 0:
+            tick(len(ms))
 
     with open(ev + ".tmp", "wb") as fh:
         for r in rows:

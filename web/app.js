@@ -29,6 +29,7 @@ const ICON = {
   play: '<svg viewBox="0 0 24 24"><path d="m5 3 14 9-14 9V3z"/></svg>',
   x: '<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>',
   flask: '<svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4 20a1 1 0 0 0 .9 1.5h14.2A1 1 0 0 0 20 20l-6-11V3"/></svg>',
+  check: '<svg viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
 };
 
 /* v: search / filter inputs by element id, kept while the case is open */
@@ -61,7 +62,7 @@ function bind(ids, draw) {
 async function api(path, opts = {}) {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
+  if (!r.ok) throw Object.assign(new Error(j.error || `Request failed (${r.status})`), { status: r.status, data: j });
   return j;
 }
 function toast(msg) {
@@ -214,7 +215,7 @@ function renderHome() {
       <div class="dropzone">
         <textarea id="paths" spellcheck="false" autocomplete="off" placeholder="One file or folder per line, e.g.&#10;D:\\Claims\\DELL-12345\\Logs&#10;D:\\Claims\\DELL-12345\\System.evtx"></textarea>
       </div>
-      <div class="row" style="margin-top:12px">
+      <div class="row" id="actions" style="margin-top:12px">
         <button class="btn" id="pickFolder">${ICON.folder} Browse folder</button>
         <button class="btn" id="pickFiles">${ICON.file} Browse files</button>
         <input type="text" id="caseName" placeholder="Case name (optional)" autocomplete="off" style="width:220px">
@@ -239,7 +240,7 @@ function renderHome() {
          ["Classify", "Each boot closes a session: clean stop, hard shutdown or undetermined — from redundant evidence."],
          ["Correlate", "Storport, disk, NVMe and PCIe events around every power cycle, tied to the drive they belong to — and the app crashes, updates and installs that led up to it."],
          ["Review", "Confidence per verdict, missing evidence listed, uncertain items flagged."]]
-        .map(([b, s], i) => `<div class="card step"><div class="n">${i + 1}</div><b>${b}</b><span>${s}</span></div>`).join("")}
+        .map(([b, s], i) => `<div class="card step"><div class="n"><i>${i + 1}</i>${ICON.check}</div><b>${b}</b><span>${s}</span></div>`).join("")}
     </div>
   </div>`;
   $("#pickFolder").onclick = () => pick("folder");
@@ -265,19 +266,100 @@ async function pick(kind) {
 }
 function showErr(msg) { const el = $("#err"); if (!el) return toast(msg); el.textContent = msg; el.style.display = msg ? "block" : "none"; }
 async function analyze(demo) {
+  if (S.busy) return toast("An analysis is still running");
   showErr("");
   const paths = $("#paths").value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
   if (!demo && !paths.length) return showErr("Add at least one .evtx file or a folder.");
-  const btn = demo ? $("#demoBtn") : $("#analyzeBtn"); btn.disabled = true;
-  const old = btn.innerHTML; btn.innerHTML = '<span class="spin" style="width:15px;height:15px;border-width:2px"></span> Analyzing…';
+  const job = crypto.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const body = { paths, name: $("#caseName").value.trim() || undefined, settings: readSettings(), job };
+  const view = progressView(job);
+  S.busy = true;
   try {
-    const body = { paths, name: $("#caseName").value.trim() || undefined, settings: readSettings() };
     const r = await api(demo ? "/api/demo" : "/api/analyze", { method: "POST", body: JSON.stringify(body) });
-    S.c = r; S.tab = "overview"; S.filter = "all"; S.v = {}; S.tl = null;
-    await loadCases(); renderCase();
-    toast(`Analyzed ${r.event_count.toLocaleString()} events in ${r.analysis_seconds}s${r.skipped_files ? ` · ${r.skipped_files} other logs skipped` : ""}`);
-  } catch (e) { showErr(e.message); }
-  finally { btn.disabled = false; btn.innerHTML = old; }
+    const here = await view.done(r);   // false: another case or a new analysis was opened meanwhile
+    if (here) { S.c = r; S.tab = "overview"; S.filter = "all"; S.v = {}; S.tl = null; }
+    await loadCases();
+    if (here) renderCase();
+    toast(`Analyzed ${r.event_count.toLocaleString()} events in ${r.analysis_seconds}s${r.skipped_files ? ` · ${r.skipped_files} other logs skipped` : ""}${here ? "" : ` · ${r.case_name} is in Recent cases`}`);
+  } catch (e) {
+    view.close();
+    if (e.data?.cancelled) toast("Analysis stopped"); else showErr(e.message);
+  } finally { S.busy = false; }
+}
+/* the analysis as it runs, polled from /api/progress: the buttons give way to what LENS is doing - the log it reads
+   and the events so far, then each step, the time taken and Cancel - and the four steps below light up in turn.
+   PROG: step -> [which of the four, where the bar starts, where it ends] */
+const PROG = { start: [0, 0, 2], read: [0, 0, 52], merge: [0, 52, 57], classify: [1, 57, 68], correlate: [2, 68, 75],
+  review: [3, 75, 78], save: [3, 78, 100], done: [4, 100, 100] };
+function progressView(job) {
+  const acts = $("#actions"), t0 = Date.now(), n = (x) => (x ?? 0).toLocaleString();
+  const cards = $$(".steps .step"), locked = $$("#paths, #caseName, .adv input");
+  const pulse = "M2 14h16l4-9 6 16 5-12 3 5h26";   // the logo's pulse, traced while it works
+  acts.hidden = true; locked.forEach((x) => (x.disabled = true));
+  acts.insertAdjacentHTML("afterend", `<div class="prog" id="prog">
+    <div class="prog-h"><svg class="prog-pulse" viewBox="0 0 64 24" aria-hidden="true"><path class="bg" d="${pulse}"/><path class="fg" pathLength="100" d="${pulse}"/></svg>
+      <div class="prog-t"><b id="progT" aria-live="polite">Starting</b><span id="progS"></span></div>
+      <span class="prog-clock" id="progC"></span><button class="btn ghost" id="progX">Cancel</button></div>
+    <div class="prog-bar"><b id="progB"></b></div></div>`);
+  $(".steps")?.classList.add("live");
+  const box = $("#prog"), stop = $("#progX");
+  let st = { step: "start" }, pct = 0, asking = false, stopping = false, final = false, timer = null;
+  const plural = (v, w) => `${n(v)} ${w}${v === 1 ? "" : "s"}`;
+  const found = (s) => (s.power_cycles != null ? `${plural(s.power_cycles, "power cycle")} · ${plural(s.sleeps, "sleep")}` : s.events ? plural(s.events, "event") : "");
+  const words = (s) => ({
+    start: ["Starting", ""],
+    read: [`Reading ${s.file}`, [s.n > 1 && `log ${s.i + 1} of ${s.n}`, s.events && plural(s.events, "event")].filter(Boolean).join(" · ")],
+    merge: ["Merging the logs into one timeline", found(s)],
+    classify: ["Rebuilding the power cycles", found(s)],
+    correlate: ["Checking the drive and the apps around each one", found(s)],
+    review: ["Scoring each verdict, flagging what needs review", found(s)],
+    save: ["Saving the case", found(s)],
+    done: ["Done", found(s)],
+  })[s.step] || [String(s.step), ""];
+  const paint = () => {
+    if (!box.isConnected) return clearInterval(timer);
+    const [k, a, b] = PROG[st.step] || PROG.start;
+    const f = st.step === "read" ? st.all : st.step === "save" ? st.frac : null;   // how far, where the step says
+    const moving = st.step === "save" ? st.frac > 0 : st.step === "read" && st.frac != null;
+    /* a step that does not say how far creeps on towards its end, so the bar never stands still */
+    pct = st.step === "done" ? 100 : Math.min(b, Math.max(pct, a + (b - a) * (f || 0), moving ? 0 : pct + (b - pct) * (st.step === "read" ? 0.02 : 0.08)));
+    cards.forEach((el, i) => { el.classList.toggle("done", i < k); el.classList.toggle("run", i === k); });
+    const [t, sub] = stopping && !final ? ["Stopping", "at the next check"] : words(st);
+    if ($("#progT").textContent !== t) $("#progT").textContent = t;
+    $("#progS").textContent = sub;
+    $("#progC").textContent = fmtDur((Date.now() - t0) / 1000);
+    $("#progB").style.width = `${pct.toFixed(1)}%`;
+  };
+  const poll = async () => {
+    if (asking || final) return;
+    asking = true;
+    try { const s = await api(`/api/progress/${encodeURIComponent(job)}`); if (!final && s?.step) st = s; }
+    catch { /* not started yet, or just finished */ }
+    finally { asking = false; }
+  };
+  timer = setInterval(() => { poll(); paint(); }, 250);
+  paint();
+  stop.onclick = async () => {
+    stopping = true; stop.disabled = true; paint();
+    try { await api(`/api/progress/${encodeURIComponent(job)}/cancel`, { method: "POST" }); } catch { /* it finished meanwhile */ }
+  };
+  return {
+    async done(r) {
+      final = true;
+      st = { step: "done", events: r.event_count, power_cycles: r.counts?.power_cycles, sleeps: (r.items?.length ?? 0) - (r.counts?.power_cycles ?? 0) };
+      if (!box.isConnected) { clearInterval(timer); return false; }
+      box.classList.add("done"); stop.hidden = true; paint();
+      await new Promise((ok) => setTimeout(ok, 450));   // a moment on Done, so the four steps are seen to finish
+      clearInterval(timer);
+      return box.isConnected;
+    },
+    close() {
+      clearInterval(timer);
+      if (!box.isConnected) return;
+      box.remove(); acts.hidden = false; locked.forEach((x) => (x.disabled = false));
+      $(".steps")?.classList.remove("live"); cards.forEach((el) => el.classList.remove("run", "done"));
+    },
+  };
 }
 
 /* ------------------------------------------------------------------ case view */
@@ -452,7 +534,8 @@ function tabCycles() {
       ${main.map(([k, l, c]) => `<button class="fchip ${S.filter === k ? "on" : ""}" data-f="${k}">${l}<span class="badge">${c}</span></button>`).join("")}
       <div class="menu" id="cyMore"><button class="fchip ${on ? "on" : ""}">${on ? `${esc(on[1])}<span class="badge">${on[2]}</span>` : "More"} ▾</button>
         <div class="menu-pop">${more.map(([k, l, c]) => `<a data-f="${k}" class="${S.filter === k ? "on" : ""}">${esc(l)}<small>${c}</small></a>`).join("")}</div></div>
-      <div class="spacer"></div><span class="muted small" id="cyN"></span>${searchBox("cyQ")}
+      <div class="spacer"></div><span class="muted small" id="cyN"></span>
+      <label class="muted small">Sort <select id="cySort">${CY_SORT.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></label>${searchBox("cyQ")}
     </div>
     <div class="card"><div class="tbl-wrap" style="max-height:calc(100vh - 290px)"><table class="t" id="cyc"></table></div></div>`;
   $$(".fchip[data-f], #cyMore a").forEach((b) => (b.onclick = () => { S.filter = b.dataset.f; tabCycles(); }));
@@ -461,9 +544,26 @@ function tabCycles() {
     e.stopPropagation();
     if (menu.classList.toggle("open")) document.addEventListener("click", () => menu.classList.remove("open"), { once: true });
   };
-  $("#cyc").onclick = (ev) => { const r = ev.target.closest("tr.click"); if (r) openDetail(r.dataset.id); };
+  /* the order is kept in this browser, for every case; When and Off for sort too when clicked */
+  const so = $("#cySort"), sortBy = (v) => { so.value = v; store.set("cySort", v); drawCycleRows(); };
+  so.value = cySort(); so.onchange = () => sortBy(so.value);
+  $("#cyc").onclick = (ev) => {
+    const h = ev.target.closest("th[data-sort]");
+    if (h) return sortBy(h.dataset.sort === "time" ? (cySort() === "earliest" ? "latest" : "earliest") : "off");
+    const r = ev.target.closest("tr.click"); if (r) openDetail(r.dataset.id);
+  };
   bind(["cyQ"], drawCycleRows);
   drawCycleRows();
+}
+const CY_SORT = [["latest", "Latest first"], ["earliest", "Earliest first"], ["off", "Longest off"]];
+const cySort = () => { const v = store.get("cySort", "earliest"); return CY_SORT.some(([k]) => k === v) ? v : "earliest"; };
+/* how long it was off: a sleep's length, else last sign of life to the next boot - the Off for column */
+const offFor = (it) => (it.type === "sleep" ? it.duration_s : it.gap_s) ?? -1;
+/* the rows come in the order they happened; Longest off keeps that order among equals and puts the unknown last */
+function sortCycles(rows, by) {
+  if (by === "latest") return rows.reverse();
+  if (by === "off") return rows.sort((a, b) => offFor(b) - offFor(a));
+  return rows;
 }
 /* the strongest lead, in one cell: for a hard or undetermined power cycle the drive (else the software), for an orderly
    one who asked for it (the account it ran under is in the panel). Both leads and their strength are in the tooltip */
@@ -482,22 +582,40 @@ function causeTip(it) {
   if (isHl(d.highlight)) out.push(`Which drive? ${d.highlight_label}`);   // the teal stripe: the problems were on the Samsung drive
   return out.join("\n");
 }
+/* what happened, in words: for a hard shutdown how it ended, for a sleep its kind and what woke it, and for an orderly
+   shutdown or restart its kind, who asked for it (User32 1074) and the reason given. The account stays in the panel */
+function whatText(it) {
+  const kind = it.subtype !== TYPES[it.type]?.short ? it.subtype : "";   // a bare "Restart" would repeat the chip
+  if (!["shutdown", "restart"].includes(it.type) || !it.software) return [kind, it.wake_source && `woke by ${it.wake_source}`].filter(Boolean).join(" · ");
+  const init = it.software.initiator;
+  const s = [kind, init ? `requested by ${init.process || "an unnamed process"}` : "no request logged (no 1074)", init && reasonSaid(init)].filter(Boolean).join(" · ");
+  return s[0].toUpperCase() + s.slice(1);
+}
+/* the reason a 1074 gives, unless it is the "Other (Unplanned)" of a plain shutdown: Windows' own title, or the decoded
+   code where Windows has none ("No title for this reason could be found") */
+function reasonSaid(init) {
+  const win = (init.reason || "").trim(), dec = init.reason_decoded || "";
+  if (/^Other: Other /.test(dec) || (!dec && /^Other \((un)?planned\)$/i.test(win))) return "";
+  return win && !/no title/i.test(win) ? win : dec;
+}
 /* one line a row: the type with its detail (cut short, whole in the tooltip), the strongest lead, warnings as one mark */
 function cycleRow(it) {
   const warns = it.flags.filter((x) => x.severity === "warn").map((x) => x.text);
-  const what = [it.subtype !== TYPES[it.type]?.short && it.subtype, it.wake_source && `woke by ${it.wake_source}`].filter(Boolean).join(" · ");   // a bare "Restart" would repeat the chip
+  const what = whatText(it), note = it.software?.initiator?.comment;
   return `<tr class="click ${S.selected === it.id ? "sel" : ""} ${hlCycle(it) ? "samrow" : ""}" data-id="${it.id}">
     <td class="mono">${it.id}${warns.length ? `<span class="flagdot" title="${esc(warns.join("\n"))}">${ICON.warn}</span>` : ""}</td>
     <td>${fmt(it.time)}</td>
-    <td class="what" title="${esc(what)}"><div class="cy-w">${chip(it.type)}<span>${esc(what)}</span></div></td>
+    <td class="what" title="${esc(what + (note ? `\n${note}` : ""))}"><div class="cy-w">${chip(it.type)}<span>${esc(what)}</span></div></td>
     <td>${esc(it.type === "sleep" ? it.duration : it.gap)}</td>
     <td title="${esc(causeTip(it))}"><span class="chips">${causeCell(it)}</span></td>
     <td>${confBar(it.confidence)}</td></tr>`;
 }
 function drawCycleRows() {
-  const rows = filtered();
+  const by = cySort(), rows = sortCycles(filtered(), by);
+  const mark = (on, up) => (on ? `<i class="srt">${up ? "↑" : "↓"}</i>` : "");
   $("#cyN").textContent = matcher(S.v.cyQ) ? `${rows.length.toLocaleString()} found` : "";
-  pageRows($("#cyc"), `<thead><tr><th>ID</th><th>When (${tzLabel()})</th><th>What happened</th><th>Off for</th><th>Likely cause</th><th>Confidence</th></tr></thead>`,
+  pageRows($("#cyc"), `<thead><tr><th>ID</th><th data-sort="time" title="Sort by time">When (${tzLabel()})${mark(by !== "off", by === "earliest")}</th><th>What happened</th>
+    <th data-sort="off" title="Longest off first">Off for${mark(by === "off")}</th><th>Likely cause</th><th>Confidence</th></tr></thead>`,
     rows, cycleRow, "Nothing matches this filter.");
 }
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -23,30 +24,71 @@ WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
 _lock = threading.Lock()
 
 
-def run_analysis(paths, name=None, settings=None):
+class Cancelled(BaseException):
+    """The analysis was stopped from the UI. A BaseException, like KeyboardInterrupt, so that no reader's
+    "this file failed, try the next" handler takes it for a broken log."""
+
+
+class Job:
+    """What one analysis is doing, for the UI's progress view: the step and its counts, kept for GET /api/progress.
+    Called by the parser, the engine and the store as they go; after cancel() its next call stops the analysis."""
+
+    def __init__(self):
+        self.state = {"step": "start"}
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+
+    def __call__(self, step, **info):
+        if self.cancelled and step != "save":   # a case being written is finished rather than left half-saved
+            raise Cancelled()
+        self.state = {"step": step, **info}
+
+
+_jobs: dict = {}                 # job id (made by the page) -> Job, while its analysis runs
+_JOB_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def run_analysis(paths, name=None, settings=None, progress=None):
+    """progress: a Job (or any callable taking a step name and counts) told what the analysis is doing."""
+    step = progress or (lambda *a, **k: None)
     cfg = catalog.load_config()
     if settings:
         for k, v in settings.items():
             if k in cfg["settings"] and isinstance(v, (int, float)):
                 cfg["settings"][k] = v
     t0 = time.time()
-    events, sources, skipped = parser.load(paths)
+    events, sources, skipped = parser.load(paths, step)
     if not events:
         errs = "; ".join(f"{s['file']}: {s['error']}" for s in sources if s.get("error"))
         if not sources and skipped:
             raise ValueError(f"No System, Application or Storport log in the folder ({len(skipped)} other logs skipped).")
         raise ValueError("No events could be read." + (f" {errs}" if errs else
                          " Check the path contains .evtx or .xml files."))
-    result = engine.analyze(events, cfg, sources)
+    result = engine.analyze(events, cfg, sources, step)
     result["case_name"] = name or result.get("computer") or "case"
     result["input_paths"] = list(paths)
     result["skipped_files"] = len(skipped)
     result["analysis_seconds"] = round(time.time() - t0, 2)
     cid = store.new_id(result["case_name"])
     result["id"] = cid
+    found = {"events": len(events), "power_cycles": result["counts"]["power_cycles"], "sleeps": len(result["items"])
+             - result["counts"]["power_cycles"]}
+    step("review", **found)   # the last chance to stop: nothing is saved yet
+    step("save", frac=0.0, **found)
     with _lock:
-        store.save(cid, result, events)
+        store.save(cid, result, events, lambda f: step("save", frac=f, **found))
     return result
+
+
+def _start_job(body) -> tuple:
+    """The Job for the id the page sent with its request, or (None, None) when it sent none."""
+    jid = body.get("job")
+    if not isinstance(jid, str) or not _JOB_ID.fullmatch(jid):
+        return None, None
+    job = _jobs[jid] = Job()
+    return jid, job
 
 
 def _warm(case_id: str):
@@ -78,8 +120,9 @@ def _pick(kind: str):
 class Handler(BaseHTTPRequestHandler):
     server_version = f"LENS/{__version__}"
 
-    def log_message(self, fmt, *args):  # quieter console
-        if "/api/" in (args[0] if args else ""):
+    def log_message(self, fmt, *args):  # quieter console: API calls only, not the progress view's polls
+        line = str(args[0]) if args else ""
+        if "/api/" in line and "/api/progress/" not in line:
             sys.stderr.write("  " + (fmt % args) + "\n")
 
     # ------------------------------------------------------------ helpers
@@ -116,6 +159,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._static(u.path)
             if parts[1:] == ["health"]:
                 return self._json({"ok": True, "version": __version__})
+            if len(parts) == 3 and parts[1] == "progress":   # what a running analysis is doing
+                job = _jobs.get(parts[2])
+                return self._json(job.state) if job else self._err("no analysis running with this id", 404)
             if parts[1:] == ["config"]:
                 return self._json(catalog.load_config())
             if parts[1:] == ["reference"]:
@@ -149,24 +195,37 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parts = [p for p in urlparse(self.path).path.split("/") if p]
+        jid = None
         try:
             body = self._body()
-            if parts == ["api", "analyze"]:
+            if parts in (["api", "analyze"], ["api", "demo"]):
+                # the page sends an id of its own, polls /api/progress/<id> meanwhile and can stop it with .../cancel
+                jid, job = _start_job(body)
+                if parts[1] == "demo":
+                    folder = os.path.join(store.ROOT, "_demo_logs")   # its files one by one: Partition is read too
+                    return self._json(run_analysis(demo.build(folder), "Demo case", body.get("settings"), job))
                 paths = [p for p in body.get("paths", []) if p and p.strip()]
                 if not paths:
                     return self._err("Give at least one file or folder path")
-                return self._json(run_analysis(paths, body.get("name"), body.get("settings")))
-            if parts == ["api", "demo"]:
-                folder = os.path.join(store.ROOT, "_demo_logs")   # its files one by one: Partition is read too
-                return self._json(run_analysis(demo.build(folder), "Demo case", body.get("settings")))
+                return self._json(run_analysis(paths, body.get("name"), body.get("settings"), job))
+            if len(parts) == 4 and parts[:2] == ["api", "progress"] and parts[3] == "cancel":
+                job = _jobs.get(parts[2])
+                if job:   # it stops at its next check: in moments, or once Windows has exported the .evtx being read
+                    job.cancel()
+                return self._json({"ok": bool(job)})
             if parts == ["api", "pick"]:
                 return self._json({"paths": _pick(body.get("kind", "folder"))})
             return self._err("not found", 404)
+        except Cancelled:
+            return self._json({"error": "Analysis stopped", "cancelled": True}, 409)
         except (ValueError, FileNotFoundError) as exc:
             return self._err(str(exc), 400)
         except Exception as exc:
             traceback.print_exc()
             return self._err(str(exc), 500)
+        finally:
+            if jid:
+                _jobs.pop(jid, None)
 
     def do_DELETE(self):
         parts = [p for p in urlparse(self.path).path.split("/") if p]

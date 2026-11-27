@@ -786,6 +786,108 @@ class XmlInPieces(unittest.TestCase):
             parse_time("2026-13-03T09:02:17Z")
 
 
+class Progress(unittest.TestCase):
+    """What the progress view shows while LENS analyzes: the log it reads, its steps, and Cancel."""
+
+    def setUp(self):
+        self.root, store.ROOT = store.ROOT, tempfile.mkdtemp()
+        self.calls = []
+
+    def tearDown(self):
+        store.ROOT = self.root
+
+    def record(self, step, **info):
+        self.calls.append((step, info))
+
+    def test_reading_says_which_log_and_how_far(self):
+        files = demo.build(tempfile.mkdtemp())
+        events, _, _ = parser.load(files, self.record)
+        self.assertEqual({s for s, _ in self.calls}, {"read"})
+        self.assertEqual([i["file"] for _, i in self.calls if i["frac"] == 0.0],
+                         [os.path.basename(f) for f in files])   # each log as it starts, in order
+        self.assertTrue(all(i["n"] == len(files) for _, i in self.calls))
+        done = [i["all"] for _, i in self.calls]                 # through all of them, by size: only forward
+        self.assertEqual(done, sorted(done))
+        self.assertEqual(done[-1], 1.0)
+        self.assertEqual(self.calls[-1][1]["events"], len(events))
+
+    def test_analysis_says_each_step_in_turn(self):
+        events, sources, _ = parser.load(demo.build(tempfile.mkdtemp()))
+        r = engine.analyze(events, catalog.load_config(), sources, self.record)
+        steps = [s for k, (s, _) in enumerate(self.calls) if k == 0 or self.calls[k - 1][0] != s]
+        self.assertEqual(steps, ["merge", "classify", "correlate", "review"])
+        found = self.calls[-1][1]
+        self.assertEqual((found["power_cycles"], found["sleeps"]), (16, 5))
+        self.assertEqual(found["power_cycles"] + found["sleeps"], len(r["items"]))
+        self.assertEqual(run(list(events))["counts"], r["counts"])   # the same verdicts with or without it
+
+    def test_cancel_stops_before_the_case_is_saved(self):
+        from lens import server
+        job, files = server.Job(), demo.build(tempfile.mkdtemp())
+
+        def stop_on_second_log(step, **info):
+            if step == "read" and info["i"] == 1:
+                job.cancel()
+            job(step, **info)
+        with self.assertRaises(server.Cancelled):   # not taken for a broken log by the readers' error handling
+            server.run_analysis(files, "stopped", None, stop_on_second_log)
+        self.assertEqual(job.state["file"], os.path.basename(files[0]))
+        self.assertEqual(store.list_cases(), [])
+        r = server.run_analysis(files, "whole", None, server.Job())   # and a job that is not stopped saves its case
+        self.assertEqual([c["id"] for c in store.list_cases()], [r["id"]])
+
+    def test_progress_and_cancel_over_the_local_api(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        from http.server import ThreadingHTTPServer
+        from lens import server
+        reached, release = threading.Event(), threading.Event()
+
+        class Held(server.Job):   # waits at the classify step until the test has looked
+            def __call__(self, step, **info):
+                super().__call__(step, **info)
+                if step == "classify":
+                    reached.set()
+                    release.wait(10)
+        class Quiet(server.Handler):
+            def log_message(self, *args):
+                pass
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Quiet)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        url, job_class, server.Job = f"http://127.0.0.1:{httpd.server_address[1]}", server.Job, Held
+
+        def call(path, body=None):
+            req = urllib.request.Request(url + path, data=None if body is None else json.dumps(body).encode(),
+                                         headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    return resp.status, json.loads(resp.read())
+            except urllib.error.HTTPError as err:
+                return err.code, json.loads(err.read())
+        try:
+            out = {}
+            t = threading.Thread(target=lambda: out.update(r=call("/api/demo", {"job": "job-1"})))
+            t.start()
+            self.assertTrue(reached.wait(20))
+            self.assertEqual(call("/api/progress/job-1"), (200, {"step": "classify", "events": 509}))
+            self.assertEqual(call("/api/progress/job-1/cancel", {}), (200, {"ok": True}))
+            release.set()
+            t.join(20)
+            self.assertEqual(out["r"], (409, {"error": "Analysis stopped", "cancelled": True}))
+            self.assertEqual(call("/api/progress/job-1")[0], 404)   # forgotten once it ended
+            self.assertEqual(call("/api/progress/job-1/cancel", {}), (200, {"ok": False}))
+            self.assertEqual(store.list_cases(), [])
+            status, r = call("/api/demo", {"job": "job-2"})   # held, then let through: a case like any other
+            self.assertEqual((status, r["counts"]["power_cycles"]), (200, 16))
+            self.assertEqual(call("/api/demo", {"job": "../../x"})[0], 200)   # an id that is not one is ignored
+        finally:
+            server.Job = job_class
+            release.set()
+            httpd.shutdown()
+            httpd.server_close()
+
+
 class Robustness(unittest.TestCase):
     def test_random_and_malformed_events_never_crash(self):
         import random
